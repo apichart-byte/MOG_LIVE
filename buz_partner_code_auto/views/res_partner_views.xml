@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Partner Form View -->
+    <record id="view_partner_form_inherit_partner_code" model="ir.ui.view">
+        <field name="name">res.partner.form.inherit.partner.code</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <field name="category_id" position="before">
+                <field name="partner_code" placeholder="Enter Partner Code"/>
+            </field>
+        </field>
+    </record>
+
+    <!-- Partner Tree View -->
+    <record id="view_partner_tree_inherit_partner_code" model="ir.ui.view">
+        <field name="name">res.partner.tree.inherit.partner.code</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_tree"/>
+        <field name="arch" type="xml">
+            <field name="display_name" position="after">
+                <field name="partner_code" string="Partner Code" optional="show"/>
+            </field>
+        </field>
+    </record>
+
+    <!-- Partner Search View -->
+    <record id="view_partner_search_inherit_partner_code" model="ir.ui.view">
+        <field name="name">res.partner.search.inherit.partner.code</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_res_partner_filter"/>
+        <field name="arch" type="xml">
+            <!-- Add partner_code to search fields -->
+            <field name="name" position="after">
+                <field name="partner_code" string="Partner Code" 
+                       filter_domain="['|', ('partner_code', 'ilike', self), ('partner_code', '=', self)]"/>
+            </field>
+            
+            <!-- Add filter for partners with code -->
+            <filter name="type_person" position="after">
+                <separator/>
+                <filter name="has_partner_code" string="Has Partner Code" 
+                        domain="[('partner_code', '!=', False)]"/>
+                <filter name="no_partner_code" string="No Partner Code" 
+                        domain="[('partner_code', '=', False)]"/>
+                <separator/>
+                <field name="partner_code" string="Search by Partner Code"/>
+            </filter>
+            
+            <!-- Add group by partner code -->
+            <filter name="group_country" position="after">
+                <filter name="group_partner_code" string="Partner Code" 
+                        context="{'group_by': 'partner_code'}"/>
+            </filter>
+        </field>
+    </record>
+</odoo>

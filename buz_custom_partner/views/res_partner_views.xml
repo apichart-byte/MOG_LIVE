@@ -1,18 +1,68 @@
 <odoo>
+    <!-- Partner Form View -->
     <record id="view_partner_form_inherit" model="ir.ui.view">
         <field name="name">res.partner.form.inherit.buz</field>
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="base.view_partner_form"/>
         <field name="arch" type="xml">
+            
+            <!-- แทรก fields ใต้ VAT -->
             <xpath expr="//field[@name='vat']" position="after">
-                <field name="partner_code" placeholder="Enter Partner Code"/>
+                <field name="partner_code" readonly="1" placeholder="Auto-generated" />
+                <field name="old_code_partner" placeholder="Enter Old Partner Code"/>
+                <field name="office" placeholder="Enter Office"/>
+                <field name="partner_group" placeholder="Enter Partner Group"/>
+                <field name="partner_type" placeholder="Enter Partner Type"/>
             </xpath>
-            <xpath expr="//field[@name='partner_code']" position="after">
-                <field name="office" placeholder="Enter Office"/>  <!-- ฟิลด์ใหม่ -->
-                <field name="partner_group" placeholder="Enter Partner Group"/>  <!-- ฟิลด์ใหม่ -->
-                <field name="partner_type" placeholder="Enter Partner Type"/>  <!-- ฟิลด์ใหม่ -->
-            </xpath>
-            <!-- ลบการเพิ่มฟิลด์ old_partner_code ออก -->
+
+        </field>
+    </record>
+
+    <!-- Partner Tree View -->
+    <record id="view_partner_tree_inherit_buz" model="ir.ui.view">
+        <field name="name">res.partner.tree.inherit.buz</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_tree"/>
+        <field name="arch" type="xml">
+            <field name="display_name" position="after">
+                <field name="partner_code" string="Partner Code" optional="show"/>
+                <field name="old_code_partner" string="Old Code" optional="hide"/>
+            </field>
+        </field>
+    </record>
+
+    <!-- Partner Search View -->
+    <record id="view_partner_search_inherit_buz" model="ir.ui.view">
+        <field name="name">res.partner.search.inherit.buz</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_res_partner_filter"/>
+        <field name="arch" type="xml">
+            <!-- Add partner_code and old_code_partner to search fields -->
+            <field name="name" position="after">
+                <field name="partner_code" string="Partner Code" 
+                       filter_domain="['|', ('partner_code', 'ilike', self), ('partner_code', '=', self)]"/>
+                <field name="old_code_partner" string="Old Code" 
+                       filter_domain="[('old_code_partner', 'ilike', self)]"/>
+            </field>
+            
+            <!-- Add filters -->
+            <filter name="type_person" position="after">
+                <separator/>
+                <filter name="has_partner_code" string="Has Partner Code" 
+                        domain="[('partner_code', '!=', False)]"/>
+                <filter name="is_customer" string="Customers (C)" 
+                        domain="[('partner_code', '=like', 'C%')]"/>
+                <filter name="is_vendor" string="Vendors (V)" 
+                        domain="[('partner_code', '=like', 'V%')]"/>
+            </filter>
+            
+            <!-- Add group by -->
+            <filter name="group_country" position="after">
+                <filter name="group_partner_type" string="Partner Type" 
+                        context="{'group_by': 'partner_type'}"/>
+                <filter name="group_partner_group" string="Partner Group" 
+                        context="{'group_by': 'partner_group'}"/>
+            </filter>
         </field>
     </record>
 </odoo>
