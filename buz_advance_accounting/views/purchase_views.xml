@@ -19,6 +19,9 @@
                 <field name="purchase_id"/>
                 <field name="move_id"/>
                 <field name="amount"/>
+                <field name="currency_id" invisible="1"/>
+                <field name="exchange_rate" string="Rate" optional="show"/>
+                <field name="amount_thb" string="Amount (THB)" optional="show"/>
                 <field name="state"/>
             </tree>
         </field>
@@ -31,12 +34,27 @@
             <form>
                 <sheet>
                     <group>
-                        <field name="date"/>
-                        <field name="purchase_id"/>
-                        <field name="move_id"/>
-                        <field name="reversal_move_id"/>
-                        <field name="amount"/>
-                        <field name="state"/>
+                        <group>
+                            <field name="date"/>
+                            <field name="purchase_id"/>
+                            <field name="move_id"/>
+                            <field name="reversal_move_id"/>
+                        </group>
+                        <group>
+                            <field name="amount"/>
+                            <field name="currency_id"/>
+                            <field name="state"/>
+                        </group>
+                    </group>
+                    <group string="Exchange Rate Information" invisible="not exchange_rate">
+                        <group>
+                            <field name="exchange_rate" string="Exchange Rate (USD → THB)"/>
+                            <field name="amount_thb" string="Amount in THB"/>
+                            <field name="company_currency_id" invisible="1"/>
+                        </group>
+                        <group>
+                            <field name="diff_account_id" string="Currency Difference Account"/>
+                        </group>
                     </group>
                 </sheet>
                 <footer>
@@ -80,15 +98,29 @@
                             <field name="name"/>
                             <field name="move_id"/>
                             <field name="amount"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="exchange_rate" string="Rate" optional="show"/>
+                            <field name="amount_thb" string="Amount (THB)" optional="show"/>
                             <field name="state"/>
                         </tree>
                         <form>
                             <group>
-                                <field name="purchase_id"/>
-                                <field name="move_id"/>
-                                <field name="amount"/>
-                                <field name="state"/>
-                                <field name="reversal_move_id"/>
+                                <group>
+                                    <field name="purchase_id"/>
+                                    <field name="move_id"/>
+                                    <field name="reversal_move_id"/>
+                                </group>
+                                <group>
+                                    <field name="amount"/>
+                                    <field name="currency_id"/>
+                                    <field name="state"/>
+                                </group>
+                            </group>
+                            <group string="Exchange Rate" invisible="not exchange_rate">
+                                <field name="exchange_rate" string="Rate (USD → THB)"/>
+                                <field name="amount_thb" string="THB"/>
+                                <field name="diff_account_id"/>
+                                <field name="company_currency_id" invisible="1"/>
                             </group>
                             <footer>
                                 <button name="action_reverse" type="object" string="Reversal" class="btn-secondary" invisible="[('state','!=','posted')]"/>

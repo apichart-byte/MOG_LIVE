@@ -17,6 +17,13 @@
                             <field name="accrual_count" string="Entries to Reverse"/>
                             <field name="reversal_date" required="1"/>
                         </group>
+                        <group invisible="not show_currency_diff">
+                            <field name="show_currency_diff" invisible="1"/>
+                            <field name="company_currency_id" invisible="1"/>
+                            <field name="exchange_rate" widget="float" string="Current Exchange Rate (USD → THB)"/>
+                            <field name="currency_diff_amount" widget="monetary" options="{'currency_field': 'company_currency_id'}" 
+                                   string="Expected Currency Difference"/>
+                        </group>
                     </group>
                     
                     <separator string="Accrual Entries to be Reversed"/>

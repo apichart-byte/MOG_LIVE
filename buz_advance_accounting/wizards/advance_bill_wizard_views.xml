@@ -20,6 +20,19 @@
                         </group>
                     </group>
                     
+                    <group string="Exchange Rate Information" invisible="currency_id == company_currency_id">
+                        <group>
+                            <field name="company_currency_id" invisible="1"/>
+                            <field name="exchange_rate" widget="float" digits="[16, 6]" string="Exchange Rate (USD → THB)" required="currency_id != company_currency_id"/>
+                            <field name="amount_thb" widget="monetary" options="{'currency_field': 'company_currency_id'}" string="Amount (THB)"/>
+                        </group>
+                        <group>
+                            <field name="diff_account_id" string="Currency Difference Account" 
+                                   domain="[('account_type', 'in', ['income_other', 'expense'])]"
+                                   required="currency_id != company_currency_id"/>
+                        </group>
+                    </group>
+                    
                     <separator string="Journal Entry Preview"/>
                     <field name="preview_line_ids" nolabel="1" readonly="1" context="{'default_wizard_id': active_id}">
                         <tree editable="bottom" create="false" delete="false">

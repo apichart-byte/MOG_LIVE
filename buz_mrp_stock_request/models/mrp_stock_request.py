@@ -344,6 +344,15 @@ class MrpStockRequest(models.Model):
             if request.state == 'requested' and request.qty_remaining_total == 0.0 and request.qty_issued_total > 0.0:
                 request.state = 'done'
 
+    @api.onchange('picking_type_id')
+    def _onchange_picking_type_id(self):
+        """Set default source and destination locations from picking type."""
+        if self.picking_type_id:
+            if self.picking_type_id.default_location_src_id:
+                self.location_id = self.picking_type_id.default_location_src_id
+            if self.picking_type_id.default_location_dest_id:
+                self.location_dest_id = self.picking_type_id.default_location_dest_id
+
     @api.constrains("mo_ids", "company_id")
     def _check_company_consistency(self):
         """Ensure all MOs belong to the same company as the request."""

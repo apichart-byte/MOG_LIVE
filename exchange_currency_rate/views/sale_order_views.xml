@@ -9,7 +9,8 @@
                 <xpath expr="//field[@name='payment_term_id']" position='after'>
                     <field name="is_exchange"/>
                     <field name="rate"
-                           invisible="is_exchange == False"/>
+                           invisible="is_exchange == False"
+                           digits="[12, 4]"/>
                 </xpath>
         </field>
     </record>

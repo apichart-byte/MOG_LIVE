@@ -32,20 +32,51 @@ class AccountMove(models.Model):
     is_exchange = fields.Boolean(string='Apply Manual Exchange',
                                  help='Check this box if you want to manually '
                                       'apply an exchange rate for this '
-                                      'transaction.')
-    rate = fields.Float(string='Rate', help='specify the rate',
-                        compute='_compute_rate', readonly=False, store=True,
-                        default=1)
+                                      'transaction.',
+                                 copy=False,
+                                 states={'posted': [('readonly', True)]})
+    rate = fields.Float(string='Rate', 
+                        help='specify the rate',
+                        readonly=False, 
+                        store=True,
+                        default=1.0, 
+                        digits=(12, 4), 
+                        copy=False,
+                        states={'posted': [('readonly', True)]})
 
-    @api.depends('invoice_line_ids.product_id')
-    def _compute_rate(self):
-        """Changing the unit price of product by changing the rate."""
-        for rec in self:
-            if rec.move_type == 'out_invoice':
-                if len(rec.invoice_line_ids) >= 1 and rec.is_exchange:
-                    rec.invoice_line_ids[-1].price_unit = rec.invoice_line_ids[
-                                                              -1].product_id.list_price * rec.rate
-            elif rec.move_type == 'in_invoice':
-                if len(rec.invoice_line_ids) >= 1 and rec.is_exchange:
-                    rec.invoice_line_ids[-1].price_unit = rec.invoice_line_ids[
-                                                              -1].product_id.standard_price * rec.rate
+
+class AccountMoveLine(models.Model):
+    """Extend account move line to use manual exchange rate."""
+    _inherit = 'account.move.line'
+
+    @api.depends('currency_id', 'company_id', 'move_id.date', 'move_id.is_exchange', 'move_id.rate')
+    def _compute_currency_rate(self):
+        """Override to use manual exchange rate when enabled."""
+        for line in self:
+            if line.move_id.is_exchange and line.move_id.rate and line.move_id.rate > 0:
+                # Use manual rate
+                line.currency_rate = line.move_id.rate
+            else:
+                # Use standard currency rate
+                super(AccountMoveLine, line)._compute_currency_rate()
+    
+    @api.depends('quantity', 'discount', 'price_unit', 'tax_ids', 'currency_id', 'move_id.is_exchange', 'move_id.rate')
+    def _compute_totals(self):
+        """Override to apply manual exchange rate."""
+        for line in self:
+            if line.display_type in ('line_section', 'line_note'):
+                continue
+                
+            # Call parent to compute standard amounts
+            super(AccountMoveLine, line)._compute_totals()
+            
+            # Apply manual rate if enabled
+            if line.move_id.is_exchange and line.move_id.rate and line.move_id.rate > 0:
+                company_currency = line.company_id.currency_id
+                if line.currency_id and line.currency_id != company_currency:
+                    # Recalculate balance with manual rate
+                    if line.price_subtotal:
+                        balance = line.price_subtotal * line.move_id.rate
+                        line.debit = balance if balance > 0.0 else 0.0
+                        line.credit = -balance if balance < 0.0 else 0.0
+                        line.balance = balance

@@ -34,12 +34,34 @@ class SaleOrder(models.Model):
                                       'rate field')
     rate = fields.Float(string='Rate', help='specify the currency rate',
                         compute='_compute_rate', readonly=False, store=True,
-                        default=1)
+                        default=1, digits=(12, 4))
 
-    @api.depends('order_line.product_id')
+    @api.depends('is_exchange')
     def _compute_rate(self):
-        """Changing the unit price of product by changing the rate."""
+        """Compute the default rate value."""
         for rec in self:
-            if len(rec.order_line) >= 1 and rec.is_exchange:
-                rec.order_line[-1].price_unit = rec.order_line[
-                                                    -1].product_id.list_price * rec.rate
+            if not rec.rate:
+                rec.rate = 1.0
+
+    @api.onchange('is_exchange', 'rate')
+    def _onchange_manual_currency_rate(self):
+        """Recompute amounts when manual rate changes."""
+        if self.is_exchange and self.rate:
+            # Trigger recomputation of order line prices
+            for line in self.order_line:
+                if not line.display_type:
+                    line._compute_amount()
+
+
+class SaleOrderLine(models.Model):
+    """Extend sale order line to use manual exchange rate."""
+    _inherit = 'sale.order.line'
+
+    def _convert_to_tax_base_line_dict(self):
+        """Override to apply manual exchange rate."""
+        self.ensure_one()
+        res = super()._convert_to_tax_base_line_dict()
+        if self.order_id.is_exchange and self.order_id.rate and self.order_id.rate != 1.0:
+            # Apply manual rate to price_unit: price * rate
+            res['price_unit'] = res['price_unit'] * self.order_id.rate
+        return res
