@@ -1,0 +1,1 @@
+git remote set-url origin <https://github.com/apcball/MOG_LIVE.gi>
