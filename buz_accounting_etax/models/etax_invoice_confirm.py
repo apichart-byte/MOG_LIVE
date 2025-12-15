@@ -35,12 +35,13 @@ class AccountMoveInherit(models.Model):
         ตรวจสอบเงื่อนไขก่อนการ Confirm Invoice
         """
         for move in self:
-            # ตัวอย่าง: ตรวจสอบว่ามี Invoice Lines หรือไม่
-            if not move.invoice_line_ids:
-                raise ValidationError(_('ไม่สามารถ Confirm ได้: ไม่มีรายการสินค้า'))
-            
-            # ตรวจสอบ Partner เฉพาะสำหรับ Invoice เท่านั้น (ไม่บังคับสำหรับ Journal Entry)
+            # ตรวจสอบว่ามี Invoice Lines หรือไม่ - เฉพาะสำหรับ invoice เท่านั้น
+            # Journal entries จะมี line_ids แทน invoice_line_ids
             if move.move_type in ['out_invoice', 'in_invoice', 'out_refund', 'in_refund']:
+                if not move.invoice_line_ids:
+                    raise ValidationError(_('ไม่สามารถ Confirm ได้: ไม่มีรายการสินค้า'))
+                
+                # ตรวจสอบ Partner เฉพาะสำหรับ Invoice เท่านั้น (ไม่บังคับสำหรับ Journal Entry)
                 if not move.partner_id:
                     raise UserError(_('กรุณาระบุลูกค้า'))
             
@@ -73,6 +74,17 @@ class AccountMoveInherit(models.Model):
         """
         สร้างรายการที่เกี่ยวข้องหลัง Confirm
         """
+        # Skip etax transaction creation for:
+        # 1. Journal entries (entry moves) - these don't have partner_id at move level
+        # 2. Moves without partner_id (e.g., settlement entries)
+        # 3. Only process customer/vendor invoices and credit notes
+        if move.move_type not in ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']:
+            return
+            
+        # Additional safety check: ensure partner_id exists
+        if not move.partner_id:
+            _logger.warning(f'Skipping etax transaction for move {move.name}: no partner_id')
+            return
 
         etax_config = self.env['etax.config'].search([('name', '=', 'UAT')], limit=1)
         sale_order = self.env['sale.order'].search([('name', '=', move.sales_order_number)], limit=1)
