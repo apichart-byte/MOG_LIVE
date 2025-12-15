@@ -1570,33 +1570,33 @@ class MarketplaceSettlement(models.Model):
         payable_debug_info = []
         
         for bill in self.vendor_bill_ids:
+            if bill.state != 'posted':
+                continue
+                
+            # Get payable account from bill
             bill_payable_lines = bill.line_ids.filtered(
                 lambda l: l.partner_id == marketplace_partner and 
-                _get_account_type(l.account_id) in ['liability_payable', 'payable'] and
-                not l.reconciled
+                _get_account_type(l.account_id) in ['liability_payable', 'payable']
             )
             
-            # Debug bill lines
-            for line in bill.line_ids:
-                line_info = (f"Bill {bill.name} - Line ID: {line.id}, "
-                           f"Partner: {line.partner_id.name if line.partner_id else 'None'}, "
-                           f"Account: {line.account_id.code} {line.account_id.name}, "
-                           f"Account Type: {_get_account_type(line.account_id)}, "
-                           f"Debit: {line.debit}, Credit: {line.credit}, "
-                           f"Reconciled: {line.reconciled}")
-                payable_debug_info.append(line_info)
+            if bill_payable_lines:
+                payable_account = bill_payable_lines[0].account_id
             
-            for line in bill_payable_lines:
-                if line.credit > 0:  # We owe marketplace
-                    total_payable_amount += line.credit
-                    payable_account = line.account_id  # Store the payable account
-                    netting_lines.append((0, 0, {
-                        'name': f'Net-off AP: {line.name}',
-                        'account_id': line.account_id.id,
-                        'partner_id': marketplace_partner.id,
-                        'debit': line.credit,  # Reverse the credit
-                        'credit': 0.0,
-                    }))
+            # Calculate payable amount based on bill type and residual
+            # For regular bills (in_invoice): amount_residual is positive (we owe)
+            # For credit notes (in_refund): amount_residual is negative (reduces what we owe)
+            bill_payable_amount = 0.0
+            
+            if bill.move_type == 'in_invoice':
+                # Regular vendor bill - we owe this amount
+                bill_payable_amount = abs(bill.amount_residual)
+                payable_debug_info.append(f"Bill {bill.name} (IN_INVOICE): +{bill_payable_amount}")
+            elif bill.move_type == 'in_refund':
+                # Credit note - reduces what we owe (subtract from total)
+                bill_payable_amount = -abs(bill.amount_residual)
+                payable_debug_info.append(f"Bill {bill.name} (IN_REFUND/Credit Note): {bill_payable_amount}")
+            
+            total_payable_amount += bill_payable_amount
 
         # Debug payable processing
         _logger.create({
@@ -1605,8 +1605,8 @@ class MarketplaceSettlement(models.Model):
             'level': 'INFO',
             'message': f'Vendor Bills Processing:\n' + '\n'.join(payable_debug_info) + 
                       f'\n\nTotal Receivable Amount: {total_receivable_amount}\n'
-                      f'Total Payable Amount: {total_payable_amount}\n'
-                      f'Netting Lines Count: {len(netting_lines)}',
+                      f'Total Payable Amount (after credit notes): {total_payable_amount}\n'
+                      f'Expected Netting Amount: {min(total_receivable_amount, abs(total_payable_amount))}',
             'path': 'marketplace.settlement',
             'func': '_create_netting_move',
             'line': '1',
@@ -1614,6 +1614,13 @@ class MarketplaceSettlement(models.Model):
 
         # Calculate net amount
         net_amount = total_receivable_amount - total_payable_amount
+        
+        # Validate payable account exists
+        if not payable_account:
+            raise UserError(_(
+                'Cannot find payable account from vendor bills. '
+                'Please ensure vendor bills have payable lines with the marketplace partner.'
+            ))
         
         # If no vendor bills to net against, this should not create a netting entry
         if float_is_zero(total_payable_amount, precision_digits=2):
@@ -1623,25 +1630,25 @@ class MarketplaceSettlement(models.Model):
             ))
         
         # Pure AR/AP Netting - only net the overlapping amounts
+        # Use absolute value of total_payable_amount in case of credit notes causing negative
         # Do NOT create net balance entries here - they should be handled via bank reconciliation
-        netting_amount = min(total_receivable_amount, total_payable_amount)
+        netting_amount = min(total_receivable_amount, abs(total_payable_amount))
         
         if float_is_zero(netting_amount, precision_digits=2):
             raise UserError(_('No amount to net between AR and AP.'))
         
         # Create pure netting entries - same amount on both sides
-        # Remove the AR entry that we added earlier and replace with correct netting logic
         netting_lines = []
         
         # Dr AP to reduce payable (reduce what we owe marketplace)
-        if payable_account:
-            netting_lines.append((0, 0, {
-                'name': f'Net-off AP: {self.name}',
-                'account_id': payable_account.id,
-                'partner_id': marketplace_partner.id,
-                'debit': netting_amount,  # Reduce AP
-                'credit': 0.0,
-            }))
+        # Use absolute value to ensure positive debit amount
+        netting_lines.append((0, 0, {
+            'name': f'Net-off AP: {self.name}',
+            'account_id': payable_account.id,
+            'partner_id': marketplace_partner.id,
+            'debit': netting_amount,  # Reduce AP (debit to decrease liability)
+            'credit': 0.0,
+        }))
         
         # Cr AR to reduce receivable (reduce what marketplace owes us)
         netting_lines.append((0, 0, {
@@ -1649,7 +1656,7 @@ class MarketplaceSettlement(models.Model):
             'account_id': marketplace_receivable_account.id,
             'partner_id': marketplace_partner.id,
             'debit': 0.0,
-            'credit': netting_amount,  # Reduce AR
+            'credit': netting_amount,  # Reduce AR (credit to decrease asset)
         }))
         
         # Note: Net balance (difference) remains in AR and will be cleared via bank reconciliation
