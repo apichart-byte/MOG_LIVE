@@ -22,6 +22,7 @@
     <field name="state" widget='statusbar'
            statusbar_visible='draft,waiting_head_approval,waiting_purchase_approval,approved,purchase_order_created,received'/>
     <field name="user_is_requester" invisible="1"/>
+    <field name="user_is_purchase" invisible="1"/>
     
     <!-- Submit Button -->
     <button name="action_confirm_requisition"
@@ -135,23 +136,23 @@
                     </div>
                     <group>
                         <group>
-                            <field name="employee_id" readonly="state not in ['draft']"/>
+                            <field name="employee_id" readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']"/>
                             <field name="dept_id"/>
                             <field name="manager_user_id"/>
                             <field name="user_id"/>
-                            <field name="company_id" readonly="state not in ['draft']"/>
+                            <field name="company_id" readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']"/>
                         </group>
                         <group>
-                            <field name="requisition_date" readonly="state not in ['draft']"/>
+                            <field name="requisition_date" readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']"/>
                             <field name="receive_date"/>
-                            <field name="requisition_deadline" readonly="state not in ['draft']"/>
-                            <field name="destination_location_id" readonly="state not in ['draft']"/>
+                            <field name="requisition_deadline" readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']"/>
+                            <field name="destination_location_id" readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']"/>
                         </group>
                     </group>
                     <notebook>
                         <page string="Requisition Orders">
                             <field name="requisition_order_ids"
-                                   readonly="state not in ['draft', 'waiting_purchase_approval']">
+                                   readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']">
                                 <tree editable="bottom">
                                     <field name="product_id"/>
                                     <field name="description"/>
@@ -197,7 +198,7 @@
                         </page>
                     </notebook>
                     <group>
-                        <field name="requisition_description"/>
+                        <field name="requisition_description" readonly="(state == 'waiting_purchase_approval' and not user_is_purchase) or state not in ['draft', 'waiting_purchase_approval']"/>
                     </group>
                 </sheet>
                 <div class="oe_chatter">
@@ -278,7 +279,6 @@
         <field name="model">employee.purchase.requisition</field>
         <field name="arch" type="xml">
             <search string="Search Tips">
-                <field name="name"/>
                 <group expand="1" string="Group By">
                     <filter string="Employee" name="employee_id"
                             context="{'group_by':'employee_id', 'residual_visible':True}"/>

@@ -11,7 +11,7 @@
     'category': 'Sales',
     'author': 'Your Company',
     'website': 'https://www.yourcompany.com',
-    'depends': ['sale_management', 'sale_margin', 'sales_team'],
+    'depends': ['sale_management', 'sale_margin', 'sales_team', 'mail'],
     'data': [
         'security/margin_approval_security.xml',
         'security/ir.model.access.csv',

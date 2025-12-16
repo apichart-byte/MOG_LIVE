@@ -29,7 +29,7 @@
                     <button name="action_reset_to_draft" string="Reset to Draft" type="object" 
                             invisible="state != 'cancel'" class="btn-primary"/>
                     <button name="action_cancel" string="Cancel" type="object" 
-                            invisible="state != 'draft'" class="btn-secondary"
+                            invisible="state == 'cancel'" class="btn-secondary"
                             confirm="Are you sure you want to cancel this refill?"/>
                 </header>
                 <sheet>

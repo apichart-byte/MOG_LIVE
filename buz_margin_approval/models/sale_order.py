@@ -74,6 +74,9 @@ class SaleOrder(models.Model):
         body = _(f"Margin Approval Requested. Order margin: {self.margin_percentage:.2f}%")
         self.message_post(body=body)
         
+        # Create mail activities for approvers
+        self._create_margin_approval_activities()
+        
         # ตรวจสอบการตั้งค่าการส่งอีเมลจาก rule ที่เกี่ยวข้อง
         if self.margin_rule_id.send_email:
             # Notify the approvers via email
@@ -100,6 +103,9 @@ class SaleOrder(models.Model):
         self.margin_approval_state = 'approved'
         body = _(f"Margin Approved by {self.env.user.name}")
         self.message_post(body=body)
+        
+        # Mark mail activities as done
+        self._mark_margin_approval_activities_done()
         
         # เดิม: เมื่ออนุมัติแล้ว ให้ confirm ทันที (return self.action_confirm())
         # ใหม่: แค่อนุมัติ ไม่ confirm อัตโนมัติ ให้ user กดปุ่ม Confirm เอง
@@ -203,3 +209,76 @@ class SaleOrder(models.Model):
         if reset_approval and self.margin_approval_state == 'approved':
             vals['margin_approval_state'] = 'pending'
         return super(SaleOrder, self).write(vals)
+
+    def _create_margin_approval_activities(self):
+        """Create mail activity for each margin approver"""
+        self.ensure_one()
+        mail_activity = self.env['mail.activity']
+        
+        for approver in self.margin_approval_user_ids:
+            # Delete old pending activities first
+            old_activities = mail_activity.search([
+                ('res_model', '=', 'sale.order'),
+                ('res_id', '=', self.id),
+                ('user_id', '=', approver.id),
+                ('activity_type_id.name', '=', 'To Do'),
+            ])
+            old_activities.unlink()
+            
+            # Create new activity
+            activity_type = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
+            if activity_type:
+                mail_activity.create({
+                    'activity_type_id': activity_type.id,
+                    'user_id': approver.id,
+                    'res_id': self.id,
+                    'res_model_id': self.env['ir.model'].search([('model', '=', 'sale.order')]).id,
+                    'summary': _('Approve Sales Order Margin: %s') % self.name,
+                    'note': _(f"""
+                        <p>Sales Order: <strong>{self.name}</strong></p>
+                        <p>Customer: {self.partner_id.name}</p>
+                        <p>Margin: <strong>{self.margin_percentage:.2f}%</strong></p>
+                        <p>Total Amount: {self.amount_total} {self.currency_id.symbol}</p>
+                        <p>Sales Person: {self.user_id.name}</p>
+                        <p>Please review and approve or reject this margin approval request.</p>
+                    """),
+                    'date_deadline': fields.Date.context_today(self),
+                })
+    
+    def _mark_margin_approval_activities_done(self):
+        """Mark margin approval activities as done when approved"""
+        self.ensure_one()
+        mail_activity = self.env['mail.activity']
+        
+        # Find all pending activities for this order
+        activities = mail_activity.search([
+            ('res_model', '=', 'sale.order'),
+            ('res_id', '=', self.id),
+            ('activity_type_id.name', '=', 'To Do'),
+            ('user_id', 'in', self.margin_approval_user_ids.ids),
+        ])
+        
+        # Mark them as done
+        for activity in activities:
+            activity.action_feedback(feedback=_('Margin Approved'))
+    
+    def _mark_margin_approval_activities_rejected(self, rejection_reason=''):
+        """Mark margin approval activities as feedback when rejected"""
+        self.ensure_one()
+        mail_activity = self.env['mail.activity']
+        
+        # Find all pending activities for this order
+        activities = mail_activity.search([
+            ('res_model', '=', 'sale.order'),
+            ('res_id', '=', self.id),
+            ('activity_type_id.name', '=', 'To Do'),
+            ('user_id', 'in', self.margin_approval_user_ids.ids),
+        ])
+        
+        # Mark them as done with rejection reason
+        feedback_msg = _('Margin Rejected') 
+        if rejection_reason:
+            feedback_msg = _('Margin Rejected - Reason: %s') % rejection_reason
+        
+        for activity in activities:
+            activity.action_feedback(feedback=feedback_msg)

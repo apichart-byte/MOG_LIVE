@@ -34,4 +34,7 @@ class MarginRejectionWizard(models.TransientModel):
         body += f"<br/><strong>Reason:</strong> {self.rejection_reason}"
         sale_order.message_post(body=body)
         
+        # Mark mail activities as rejected with reason
+        sale_order._mark_margin_approval_activities_rejected(self.rejection_reason)
+        
         return {'type': 'ir.actions.act_window_close'}
