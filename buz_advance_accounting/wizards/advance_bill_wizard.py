@@ -9,6 +9,7 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
     _description = 'Create Advance Accrual from PO'
 
     purchase_id = fields.Many2one('purchase.order', required=True)
+    vendor_bill_id = fields.Many2one('account.move', string='Linked Vendor Bill', readonly=True, help='Vendor bill from which amount and exchange rate are pulled')
     journal_id = fields.Many2one('account.journal', string='Journal', required=True, domain="[('type', '=', 'general')]")
     accrual_account_id = fields.Many2one('account.account', string='Accrual Account', required=True, domain="[('deprecated', '=', False)]")
     amount = fields.Monetary(required=True)
@@ -21,9 +22,14 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
                                   help='Exchange rate from USD to THB. For example, 35.50 means 1 USD = 35.50 THB')
     amount_thb = fields.Monetary(string='Amount in THB', currency_field='company_currency_id', compute='_compute_amount_thb', store=True)
     company_currency_id = fields.Many2one('res.currency', related='purchase_id.company_id.currency_id', store=False)
-    diff_account_id = fields.Many2one('account.account', string='Currency Difference Account', 
-                                       domain="[('deprecated', '=', False)]",
-                                       help='Account for posting currency exchange rate differences')
+    
+    # Currency difference accounts (from company settings)
+    currency_gain_account_id = fields.Many2one('account.account', string='Gain Account', 
+                                                related='purchase_id.company_id.income_currency_exchange_account_id',
+                                                help='Currency exchange gain account from company settings')
+    currency_loss_account_id = fields.Many2one('account.account', string='Loss Account',
+                                                related='purchase_id.company_id.expense_currency_exchange_account_id', 
+                                                help='Currency exchange loss account from company settings')
 
     preview_line_ids = fields.One2many('purchase.advance.bill.preview.line', 'wizard_id', string='Preview Lines', readonly=True)
 
@@ -38,20 +44,79 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             po = self.purchase_id
             # Set currency first
             self.currency_id = po.currency_id or self.env.company.currency_id
-            # Set amount in original currency (USD)
-            # Use amount_total directly without conversion
-            self.amount = po.amount_total
             
-            # Get exchange rate from system
-            usd_currency = self.env['res.currency'].search([('name', '=', 'USD')], limit=1)
-            thb_currency = self.env['res.currency'].search([('name', '=', 'THB')], limit=1)
+            # Check if called from picking/receipt
+            from_picking = self.env.context.get('from_picking', False)
             
-            if usd_currency and thb_currency and self.currency_id == usd_currency:
-                # Get exchange rate from currency rate table for today
-                rate = usd_currency._convert(1.0, thb_currency, self.env.company, self.date or fields.Date.today())
-                self.exchange_rate = rate
+            if from_picking:
+                # Called from Receipt: try to get amount and exchange rate from linked bill
+                # Search for bills linked through invoice lines (proper Odoo way)
+                vendor_bill = self.env['account.move'].search([
+                    ('move_type', '=', 'in_invoice'),
+                    ('state', '=', 'posted'),
+                    ('invoice_line_ids.purchase_line_id.order_id', '=', po.id)
+                ], limit=1, order='date desc, id desc')
+                
+                # Fallback: check custom purchase_id field if it exists
+                if not vendor_bill:
+                    vendor_bill = self.env['account.move'].search([
+                        ('purchase_id', '=', po.id),
+                        ('move_type', '=', 'in_invoice'),
+                        ('state', '=', 'posted')
+                    ], limit=1, order='date desc, id desc')
+                
+                if vendor_bill:
+                    # Store reference to the vendor bill
+                    self.vendor_bill_id = vendor_bill.id
+                    
+                    # Use amount from vendor bill
+                    self.amount = vendor_bill.amount_total
+                    
+                    # Use exchange rate from vendor bill (from exchange_currency_rate module)
+                    if vendor_bill.is_exchange and vendor_bill.rate and vendor_bill.rate > 0:
+                        # Use manual exchange rate from bill (exchange_currency_rate module)
+                        self.exchange_rate = vendor_bill.rate
+                    else:
+                        # Get system rate from bill's currency conversion
+                        usd_currency = self.env['res.currency'].search([('name', '=', 'USD')], limit=1)
+                        thb_currency = self.env['res.currency'].search([('name', '=', 'THB')], limit=1)
+                        
+                        if usd_currency and thb_currency and self.currency_id == usd_currency:
+                            # Get exchange rate from currency rate table for bill's date
+                            rate = usd_currency._convert(1.0, thb_currency, self.env.company, vendor_bill.date or fields.Date.today())
+                            self.exchange_rate = rate
+                        else:
+                            self.exchange_rate = 1.0
+                else:
+                    # No bill found, clear reference and use PO amount
+                    self.vendor_bill_id = False
+                    self.amount = po.amount_total
+                    
+                    # Get exchange rate from system
+                    usd_currency = self.env['res.currency'].search([('name', '=', 'USD')], limit=1)
+                    thb_currency = self.env['res.currency'].search([('name', '=', 'THB')], limit=1)
+                    
+                    if usd_currency and thb_currency and self.currency_id == usd_currency:
+                        # Get exchange rate from currency rate table for today
+                        rate = usd_currency._convert(1.0, thb_currency, self.env.company, self.date or fields.Date.today())
+                        self.exchange_rate = rate
+                    else:
+                        self.exchange_rate = 1.0
             else:
-                self.exchange_rate = 1.0
+                # Called from PO: use PO amount and system exchange rate directly
+                self.vendor_bill_id = False
+                self.amount = po.amount_total
+                
+                # Get exchange rate from system
+                usd_currency = self.env['res.currency'].search([('name', '=', 'USD')], limit=1)
+                thb_currency = self.env['res.currency'].search([('name', '=', 'THB')], limit=1)
+                
+                if usd_currency and thb_currency and self.currency_id == usd_currency:
+                    # Get exchange rate from currency rate table for today
+                    rate = usd_currency._convert(1.0, thb_currency, self.env.company, self.date or fields.Date.today())
+                    self.exchange_rate = rate
+                else:
+                    self.exchange_rate = 1.0
                 
             self._recompute_preview()
 
@@ -142,7 +207,7 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             amount_untaxed_usd = total_amount_usd * untaxed_rate
             amount_tax_usd = total_amount_usd * tax_rate
             
-            # Convert DEBIT side using USER's exchange rate
+            # DEBIT side: Convert using MANUAL rate from wizard
             if wizard.exchange_rate and wizard.exchange_rate > 0:
                 amount_untaxed_thb_debit = amount_untaxed_usd * wizard.exchange_rate
                 amount_tax_thb_debit = amount_tax_usd * wizard.exchange_rate
@@ -152,8 +217,36 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
                 amount_tax_thb_debit = src_currency._convert(amount_tax_usd, company_currency, company, wizard.date or fields.Date.context_today(wizard))
                 total_debit = amount_untaxed_thb_debit + amount_tax_thb_debit
             
-            # Convert CREDIT side using SYSTEM rate (accrual account)
-            total_amount_thb_credit = src_currency._convert(total_amount_usd, company_currency, company, wizard.date or fields.Date.context_today(wizard))
+            # CREDIT side: Convert using rate from BILL (system rate)
+            # Try to get rate from linked bill
+            bill_rate = 0.0
+            # Search for bills linked through invoice lines (proper Odoo way)
+            vendor_bill = wizard.env['account.move'].search([
+                ('move_type', '=', 'in_invoice'),
+                ('state', '=', 'posted'),
+                ('invoice_line_ids.purchase_line_id.order_id', '=', po.id)
+            ], limit=1, order='date desc, id desc')
+            
+            # Fallback: check custom purchase_id field if it exists
+            if not vendor_bill:
+                vendor_bill = wizard.env['account.move'].search([
+                    ('purchase_id', '=', po.id),
+                    ('move_type', '=', 'in_invoice'),
+                    ('state', '=', 'posted')
+                ], limit=1, order='date desc, id desc')
+            
+            if vendor_bill:
+                if hasattr(vendor_bill, 'is_exchange') and vendor_bill.is_exchange and hasattr(vendor_bill, 'rate') and vendor_bill.rate > 0:
+                    bill_rate = vendor_bill.rate
+                else:
+                    # Calculate from bill's currency conversion
+                    bill_rate = src_currency._convert(1.0, company_currency, company, vendor_bill.date or fields.Date.today())
+            
+            if bill_rate > 0:
+                total_amount_thb_credit = total_amount_usd * bill_rate
+            else:
+                # Fallback to system rate
+                total_amount_thb_credit = src_currency._convert(total_amount_usd, company_currency, company, wizard.date or fields.Date.context_today(wizard))
             
             # Calculate currency difference
             currency_diff = total_debit - total_amount_thb_credit
@@ -168,50 +261,51 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             label_tax = wizard.ref or _('Input Tax')
             
             if amount_untaxed_thb_debit > 0 and expense_account and wizard.accrual_account_id:
-                # Expense line (Debit) - using USER's exchange rate
+                # Expense line (Debit) - using MANUAL rate from wizard
                 lines.append((0, 0, {
                     'account_id': expense_account.id,
-                    'name': label + ' (Rate: %.6f)' % wizard.exchange_rate,
+                    'name': label + ' (Manual Rate: %.6f)' % (wizard.exchange_rate or 0),
                     'debit': amount_untaxed_thb_debit,
                     'credit': 0.0,
                 }))
                 
-                # Tax line (Debit) - if there's tax, using USER's exchange rate
+                # Tax line (Debit) - if there's tax, using MANUAL rate from wizard
                 if amount_tax_thb_debit > 0 and tax_input_account:
                     lines.append((0, 0, {
                         'account_id': tax_input_account.id,
-                        'name': label_tax + ' (Rate: %.6f)' % wizard.exchange_rate,
+                        'name': label_tax + ' (Manual Rate: %.6f)' % (wizard.exchange_rate or 0),
                         'debit': amount_tax_thb_debit,
                         'credit': 0.0,
                     }))
                 
-                # Accrual account (Credit) - using SYSTEM rate
-                system_rate = total_amount_thb_credit / total_amount_usd if total_amount_usd > 0 else 0
+                # Accrual account (Credit) - using rate from BILL
                 lines.append((0, 0, {
                     'account_id': wizard.accrual_account_id.id,
-                    'name': label + ' (System Rate: %.6f)' % system_rate,
+                    'name': label + ' (Bill Rate: %.6f)' % (bill_rate if bill_rate > 0 else wizard.exchange_rate or 0),
                     'debit': 0.0,
                     'credit': total_amount_thb_credit,
                 }))
                 
-                # Currency difference line (if exists and diff account is set)
-                if abs(currency_diff) > 0.01 and wizard.diff_account_id:
+                # Currency difference line (if exists)
+                if abs(currency_diff) > 0.01:
                     if currency_diff > 0:
-                        # Debit > Credit: need to credit diff account
-                        lines.append((0, 0, {
-                            'account_id': wizard.diff_account_id.id,
-                            'name': _('Currency Difference'),
-                            'debit': 0.0,
-                            'credit': abs(currency_diff),
-                        }))
+                        # Debit > Credit = Loss (expense): need to credit loss account
+                        if wizard.currency_loss_account_id:
+                            lines.append((0, 0, {
+                                'account_id': wizard.currency_loss_account_id.id,
+                                'name': _('Currency Exchange Loss'),
+                                'debit': 0.0,
+                                'credit': abs(currency_diff),
+                            }))
                     else:
-                        # Credit > Debit: need to debit diff account
-                        lines.append((0, 0, {
-                            'account_id': wizard.diff_account_id.id,
-                            'name': _('Currency Difference'),
-                            'debit': abs(currency_diff),
-                            'credit': 0.0,
-                        }))
+                        # Credit > Debit = Gain (income): need to debit gain account
+                        if wizard.currency_gain_account_id:
+                            lines.append((0, 0, {
+                                'account_id': wizard.currency_gain_account_id.id,
+                                'name': _('Currency Exchange Gain'),
+                                'debit': abs(currency_diff),
+                                'credit': 0.0,
+                            }))
             
             wizard.preview_line_ids = [Command.clear()] + [Command.create(vals[2]) for vals in lines]
 
@@ -250,7 +344,7 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
         amount_untaxed_usd = total_amount_usd * untaxed_rate
         amount_tax_usd = total_amount_usd * tax_rate
         
-        # Convert DEBIT side using USER's exchange rate
+        # DEBIT side: Convert using MANUAL rate from wizard
         if self.exchange_rate and self.exchange_rate > 0:
             amount_untaxed_thb_debit = amount_untaxed_usd * self.exchange_rate
             amount_tax_thb_debit = amount_tax_usd * self.exchange_rate
@@ -261,8 +355,36 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             amount_tax_thb_debit = src_currency._convert(amount_tax_usd, company_currency, company, self.date or fields.Date.context_today(self))
             total_debit = amount_untaxed_thb_debit + amount_tax_thb_debit
         
-        # Convert CREDIT side using SYSTEM rate (accrual account)
-        total_amount_thb_credit = src_currency._convert(total_amount_usd, company_currency, company, self.date or fields.Date.context_today(self))
+        # CREDIT side: Convert using rate from BILL
+        # Try to get rate from linked bill
+        bill_rate = 0.0
+        # Search for bills linked through invoice lines (proper Odoo way)
+        vendor_bill = self.env['account.move'].search([
+            ('move_type', '=', 'in_invoice'),
+            ('state', '=', 'posted'),
+            ('invoice_line_ids.purchase_line_id.order_id', '=', po.id)
+        ], limit=1, order='date desc, id desc')
+        
+        # Fallback: check custom purchase_id field if it exists
+        if not vendor_bill:
+            vendor_bill = self.env['account.move'].search([
+                ('purchase_id', '=', po.id),
+                ('move_type', '=', 'in_invoice'),
+                ('state', '=', 'posted')
+            ], limit=1, order='date desc, id desc')
+        
+        if vendor_bill:
+            if hasattr(vendor_bill, 'is_exchange') and vendor_bill.is_exchange and hasattr(vendor_bill, 'rate') and vendor_bill.rate > 0:
+                bill_rate = vendor_bill.rate
+            else:
+                # Calculate from bill's currency conversion
+                bill_rate = src_currency._convert(1.0, company_currency, company, vendor_bill.date or fields.Date.today())
+        
+        if bill_rate > 0:
+            total_amount_thb_credit = total_amount_usd * bill_rate
+        else:
+            # Fallback to system rate
+            total_amount_thb_credit = src_currency._convert(total_amount_usd, company_currency, company, self.date or fields.Date.context_today(self))
         
         # Calculate currency difference
         currency_diff = total_debit - total_amount_thb_credit
@@ -270,9 +392,9 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
         # Prepare journal entry lines
         journal_lines = []
         
-        # Expense line (Debit) - using USER's exchange rate
+        # Expense line (Debit) - using MANUAL rate from wizard
         journal_lines.append((0, 0, {
-            'name': (self.ref or _('Advance Accrual')) + (' (Rate: %.6f)' % self.exchange_rate if self.exchange_rate else ''),
+            'name': (self.ref or _('Advance Accrual')) + (' (Manual Rate: %.6f)' % (self.exchange_rate or 0)),
             'debit': amount_untaxed_thb_debit if amount_untaxed_thb_debit > 0 else 0.0,
             'credit': 0.0,
             'account_id': expense_account.id,
@@ -281,10 +403,10 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             'amount_currency': amount_untaxed_usd if src_currency != company_currency else amount_untaxed_thb_debit,
         }))
         
-        # Tax line (Debit) - if there's tax and tax account, using USER's exchange rate
+        # Tax line (Debit) - if there's tax and tax account, using MANUAL rate from wizard
         if amount_tax_thb_debit > 0 and tax_input_account:
             journal_lines.append((0, 0, {
-                'name': (self.ref or _('Input Tax')) + (' (Rate: %.6f)' % self.exchange_rate if self.exchange_rate else ''),
+                'name': (self.ref or _('Input Tax')) + (' (Manual Rate: %.6f)' % (self.exchange_rate or 0)),
                 'debit': amount_tax_thb_debit,
                 'credit': 0.0,
                 'account_id': tax_input_account.id,
@@ -293,10 +415,9 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
                 'amount_currency': amount_tax_usd if src_currency != company_currency else amount_tax_thb_debit,
             }))
         
-        # Accrual account (Credit) - using SYSTEM rate
-        system_rate = total_amount_thb_credit / total_amount_usd if total_amount_usd > 0 else 0
+        # Accrual account (Credit) - using rate from BILL
         journal_lines.append((0, 0, {
-            'name': (self.ref or _('Advance Accrual')) + (' (System Rate: %.6f)' % system_rate),
+            'name': (self.ref or _('Advance Accrual')) + (' (Bill Rate: %.6f)' % (bill_rate if bill_rate > 0 else self.exchange_rate or 0)),
             'debit': 0.0,
             'credit': total_amount_thb_credit if total_amount_thb_credit > 0 else 0.0,
             'account_id': self.accrual_account_id.id,
@@ -305,30 +426,36 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             'amount_currency': -total_amount_usd if src_currency != company_currency else -total_amount_thb_credit,
         }))
         
-        # Currency difference line (if exists and diff account is set)
-        if abs(currency_diff) > 0.01 and self.diff_account_id:
+        # Handle currency difference using Default Accounts from Accounting settings
+        if abs(currency_diff) > 0.01:
+            # Get currency exchange accounts from company
             if currency_diff > 0:
-                # Total Debit > Total Credit: need to credit diff account to balance
+                # Debit > Credit: Gain (need to credit)
+                diff_account = company.expense_currency_exchange_account_id
+                if not diff_account:
+                    raise UserError(_('Currency difference detected (%.2f THB gain) but no "Loss Exchange Rate Account" is configured in Accounting Settings.') % abs(currency_diff))
                 journal_lines.append((0, 0, {
-                    'name': _('Currency Difference (%.6f - %.6f)') % (self.exchange_rate or 0, system_rate),
+                    'name': _('Currency Gain'),
                     'debit': 0.0,
                     'credit': abs(currency_diff),
-                    'account_id': self.diff_account_id.id,
+                    'account_id': diff_account.id,
                     'partner_id': po.partner_id.id,
                     'currency_id': company_currency.id,
                 }))
             else:
-                # Total Credit > Total Debit: need to debit diff account to balance
+                # Credit > Debit: Loss (need to debit)
+                diff_account = company.income_currency_exchange_account_id
+                if not diff_account:
+                    raise UserError(_('Currency difference detected (%.2f THB loss) but no "Gain Exchange Rate Account" is configured in Accounting Settings.') % abs(currency_diff))
                 journal_lines.append((0, 0, {
-                    'name': _('Currency Difference (%.6f - %.6f)') % (self.exchange_rate or 0, system_rate),
+                    'name': _('Currency Loss'),
                     'debit': abs(currency_diff),
                     'credit': 0.0,
-                    'account_id': self.diff_account_id.id,
+                    'account_id': diff_account.id,
                     'partner_id': po.partner_id.id,
                     'currency_id': company_currency.id,
                 }))
-        elif abs(currency_diff) > 0.01 and not self.diff_account_id:
-            raise UserError(_('Currency difference detected (%.2f THB) but no Currency Difference Account is selected. Please select an account to post the difference.') % currency_diff)
+
 
         move_vals = {
             'move_type': 'entry',
@@ -349,8 +476,7 @@ class PurchaseAdvanceBillWizard(models.TransientModel):
             'currency_id': self.currency_id.id,
             'date': self.date,
             'exchange_rate': self.exchange_rate,
-            'amount_thb': total_debit,  # Store THB amount calculated with user's rate
-            'diff_account_id': self.diff_account_id.id if self.diff_account_id else False,
+            'amount_thb': total_debit,  # Store THB amount calculated with manual rate (Debit side)
         })
         return {
             'type': 'ir.actions.act_window',

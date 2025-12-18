@@ -25,8 +25,6 @@ class PurchaseAdvanceAccrual(models.Model):
                                   help='Exchange rate used when creating the accrual')
     amount_thb = fields.Monetary(string='Amount in THB', currency_field='company_currency_id')
     company_currency_id = fields.Many2one('res.currency', related='purchase_id.company_id.currency_id', store=False)
-    diff_account_id = fields.Many2one('account.account', string='Currency Difference Account',
-                                       help='Account for posting currency exchange rate differences on reversal')
 
     def action_reverse(self):
         for rec in self:

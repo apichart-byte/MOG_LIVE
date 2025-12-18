@@ -6,6 +6,12 @@
         <field name="arch" type="xml">
             <form string="Create Advance Accrual">
                 <sheet>
+                    <div class="alert alert-info" role="alert" invisible="not vendor_bill_id">
+                        <strong>ℹ️ Data Source:</strong> Amount and exchange rate are pulled from linked vendor bill: <field name="vendor_bill_id" readonly="1" nolabel="1" class="oe_inline"/>
+                    </div>
+                    <div class="alert alert-warning" role="alert" invisible="vendor_bill_id">
+                        <strong>⚠️ Warning:</strong> No posted vendor bill found for this PO. Using PO amount and system exchange rate.
+                    </div>
                     <group string="Accrual Information">
                         <group>
                             <field name="purchase_id" invisible="1"/>
@@ -27,9 +33,8 @@
                             <field name="amount_thb" widget="monetary" options="{'currency_field': 'company_currency_id'}" string="Amount (THB)"/>
                         </group>
                         <group>
-                            <field name="diff_account_id" string="Currency Difference Account" 
-                                   domain="[('account_type', 'in', ['income_other', 'expense'])]"
-                                   required="currency_id != company_currency_id"/>
+                            <field name="currency_gain_account_id" readonly="1" string="Gain Account (Auto)"/>
+                            <field name="currency_loss_account_id" readonly="1" string="Loss Account (Auto)"/>
                         </group>
                     </group>
                     
