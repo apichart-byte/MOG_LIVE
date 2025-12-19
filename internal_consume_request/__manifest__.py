@@ -20,6 +20,7 @@
         'hr',
         'stock',
         'mail',
+        'account',
     ],
     'data': [
         'security/security.xml',

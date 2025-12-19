@@ -10,30 +10,29 @@
 
 {
     'name': 'Extra Bank Charges In Payments',
-    'version': '17.0.0.0',
+    'version': '17.0.1.0',
     'category': 'Accounting',
     "license": "OPL-1",
-    'summary': 'Additional charges, extra transaction bank fee, credit card charge, extra fee on bank transfer, additional charges on bank money transfer, gst charges on bank transfers, government tax on foreign transaction, gst on foreign transaction, fixed bank charges on foreign transaction, foreign transaction bank fee, foreign transaction bank charges',
+    'summary': 'Additional charges in Thai Baht (THB), extra transaction bank fee, credit card charge, extra fee on bank transfer, additional charges on bank money transfer, THB only bank charges regardless of bill currency',
     'description': """
-    Additional Charges
-    Credit Card Charges
-    Transfer charges
-    transfer fees
-    foreign transfer charges
-    foreign currency transfer fee
-    payment fee on vendor bills
-    extra bank charges
-    extra bank fee
-    fees on payment
-    transaction fee
-    extra credit card charges
-    extra credit card fee
-    separate journal entry for bank fee
-    separate journal entry for bank charges
-    bank fee
-    bank charges
-    maintenance charge
-    security charges
+    Additional Charges in Thai Baht (THB)
+    ===========================================
+    
+    This module allows you to add bank charges in Thai Baht (THB) currency only,
+    regardless of the invoice/bill currency (USD, EUR, etc.).
+    
+    Features:
+    - Bank charges always in THB
+    - Automatic currency conversion for accounting entries
+    - Separate journal entries for bank charges
+    - Support for foreign currency invoices with THB bank charges
+    - Proper exchange rate handling
+    
+    Key Benefits:
+    - Bank charges in local currency (THB) only
+    - Multi-currency support with THB bank fees
+    - Accurate accounting with proper currency conversion
+    - Separate tracking of bank charges
 """,
     "price": 10,
     "currency": 'EUR',
@@ -41,6 +40,7 @@
     'depends': ['base','account'],
     'data': [
              'views/sr_inherit_journal.xml',
+             'views/sr_inherit_account_payment_views.xml',
              'wizards/sr_inherit_account_payment_register_views.xml'
     ],
     'website':'https://sitaramsolutions.in',

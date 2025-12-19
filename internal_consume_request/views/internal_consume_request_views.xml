@@ -7,7 +7,7 @@
             <field name="name">internal.consume.request.tree</field>
             <field name="model">internal.consume.request</field>
             <field name="arch" type="xml">
-                <tree string="Stock Requests" 
+                <tree string="Stock Requests"
                       decoration-info="state == 'draft'"
                       decoration-warning="state == 'to_approve'"
                       decoration-success="state == 'done'"
@@ -18,12 +18,17 @@
                     <field name="department_id"/>
                     <field name="manager_id"/>
                     <field name="warehouse_id"/>
-                    <field name="state" widget="badge" 
+                    <field name="state" widget="badge"
                            decoration-info="state == 'draft'"
                            decoration-warning="state == 'to_approve'"
                            decoration-primary="state == 'approved'"
                            decoration-success="state == 'done'"
                            decoration-danger="state == 'rejected'"/>
+                    <button name="action_duplicate_request"
+                            type="object"
+                            icon="fa-copy"
+                            title="Duplicate Request"
+                            invisible="state in ('to_approve', 'approved')"/>
                 </tree>
             </field>
         </record>
@@ -35,39 +40,44 @@
             <field name="arch" type="xml">
                 <form string="Stock Request">
                     <header>
-                        <button name="action_submit" 
-                                string="Submit for Approval" 
-                                type="object" 
+                        <button name="action_duplicate_request"
+                                string="Duplicate"
+                                type="object"
+                                icon="fa-copy"
+                                invisible="state in ('to_approve', 'approved')"/>
+                        <button name="action_submit"
+                                string="Submit for Approval"
+                                type="object"
                                 class="oe_highlight"
                                 invisible="state != 'draft' or not allow_submit"/>
-                        <button name="action_approve" 
-                                string="Approve" 
-                                type="object" 
+                        <button name="action_approve"
+                                string="Approve"
+                                type="object"
                                 class="oe_highlight"
                                 invisible="state != 'to_approve' or has_insufficient_stock"
                                 groups="internal_consume_request.group_internal_consume_manager"/>
-                        <button name="action_reject" 
-                                string="Reject" 
+                        <button name="action_reject"
+                                string="Reject"
                                 type="object"
                                 invisible="state != 'to_approve'"
                                 groups="internal_consume_request.group_internal_consume_manager"/>
-                        <button name="action_create_picking" 
-                                string="Create Transfer" 
+                        <button name="action_create_picking"
+                                string="Create Transfer"
                                 type="object"
                                 invisible="state != 'approved' or picking_id"
                                 groups="internal_consume_request.group_internal_consume_stock"/>
-                        <button name="action_done" 
-                                string="Done" 
-                                type="object" 
+                        <button name="action_done"
+                                string="Done"
+                                type="object"
                                 class="oe_highlight"
                                 invisible="state != 'approved'"
                                 groups="internal_consume_request.group_internal_consume_stock"/>
-                        <button name="action_set_to_draft" 
-                                string="Set to Draft" 
+                        <button name="action_set_to_draft"
+                                string="Set to Draft"
                                 type="object"
                                 invisible="state != 'rejected'"
                                 groups="internal_consume_request.group_internal_consume_manager"/>
-                        <field name="state" widget="statusbar" 
+                        <field name="state" widget="statusbar"
                                statusbar_visible="draft,to_approve,approved,done"/>
                     </header>
                     <!-- Stock Warning Banner -->
@@ -119,21 +129,32 @@
                                           editable="bottom"
                                           decoration-danger="qty_requested &gt; available_qty">
                                         <field name="sequence" widget="handle"/>
-                                        <field name="product_id" 
+                                        <field name="line_number" string="No." readonly="1"/>
+                                        <field name="product_id"
                                                domain="[('type', 'in', ['consu', 'product'])]"
                                                required="1"/>
                                         <field name="description"/>
                                         <field name="qty_requested" string="Qty Requested"/>
                                         <field name="product_uom_id" groups="uom.group_uom"/>
+                                        <field name="analytic_distribution" required="1" widget="analytic_distribution"/>
                                         <field name="available_qty" string="Available" 
                                                decoration-danger="qty_requested &gt; available_qty"
                                                decoration-success="qty_requested &lt;= available_qty"/>
                                         <field name="qty_done" string="Qty Done" optional="show"/>
+                                        <button name="action_duplicate_line" 
+                                                type="object" 
+                                                icon="fa-copy" 
+                                                title="Duplicate Line"
+                                                invisible="state in ('to_approve', 'approved', 'done', 'rejected')"/>
                                         <field name="product_uom_category_id" column_invisible="1"/>
                                         <field name="location_id" column_invisible="1"/>
                                         <field name="state" column_invisible="1"/>
+                                        <field name="analytic_precision" column_invisible="1"/>
                                     </tree>
                                 </field>
+                                <group string="Reason For Requisition">
+                                    <field name="reason_for_requisition" placeholder="กรุณาระบุเหตุผลในการขอเบิกวัสดุ/อุปกรณ์..."/>
+                                </group>
                             </page>
                             <page string="Other Info" name="other_info">
                                 <group>
@@ -141,11 +162,11 @@
                                         <field name="picking_id" readonly="1"/>
                                     </group>
                                     <group>
-                                        <field name="rejection_reason" 
+                                        <field name="rejection_reason"
                                                readonly="1"
                                                invisible="state != 'rejected'"
                                                widget="text"/>
-                                        <field name="reason" 
+                                        <field name="reason"
                                                readonly="1"
                                                invisible="not reason"
                                                widget="text"

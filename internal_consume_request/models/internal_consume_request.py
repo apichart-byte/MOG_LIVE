@@ -146,6 +146,13 @@ class InternalConsumeRequest(models.Model):
         states={'to_approve': [('readonly', True)], 'approved': [('readonly', True)], 'done': [('readonly', True)], 'rejected': [('readonly', True)]}
     )
     
+    reason_for_requisition = fields.Text(
+        string='Reason For Requisition',
+        tracking=True,
+        help='เหตุผลในการขอเบิกวัสดุ/อุปกรณ์',
+        states={'to_approve': [('readonly', True)], 'approved': [('readonly', True)], 'done': [('readonly', True)], 'rejected': [('readonly', True)]}
+    )
+    
     # New fields for auto-reject functionality
     has_insufficient_stock = fields.Boolean(
         string='Has Insufficient Stock',
@@ -249,6 +256,29 @@ class InternalConsumeRequest(models.Model):
                 vals['name'] = self.env['ir.sequence'].next_by_code(
                     'internal.consume.request') or 'New'
         return super().create(vals_list)
+    
+    def copy(self, default=None):
+        """Override copy method to ensure all lines are properly duplicated"""
+        if default is None:
+            default = {}
+        
+        # Ensure line_ids are copied with all their data
+        if 'line_ids' not in default:
+            new_line_ids = []
+            for line in self.line_ids:
+                # Prepare line values for copying
+                line_vals = {
+                    'product_id': line.product_id.id,
+                    'description': line.description,
+                    'product_uom_id': line.product_uom_id.id,
+                    'qty_requested': line.qty_requested,
+                    'analytic_distribution': line.analytic_distribution or {},
+                    'sequence': line.sequence,
+                }
+                new_line_ids.append((0, 0, line_vals))
+            default['line_ids'] = new_line_ids
+        
+        return super().copy(default)
 
     @api.constrains('line_ids')
     def _check_lines(self):
@@ -261,6 +291,13 @@ class InternalConsumeRequest(models.Model):
         self.ensure_one()
         if not self.line_ids:
             raise UserError(_('Please add at least one product line before submitting.'))
+        
+        # Check if all lines have analytic distribution
+        for line in self.line_ids:
+            if not line.analytic_distribution or not any(line.analytic_distribution.values()):
+                raise UserError(
+                    _('Please enter Analytic Distribution for all items before submitting for approval.')
+                )
         
         # Check stock availability before submit
         insufficient_lines = []
@@ -558,6 +595,34 @@ class InternalConsumeRequest(models.Model):
         """Reset to draft"""
         self.ensure_one()
         self.state = 'draft'
+
+    def action_duplicate_request(self):
+        """Duplicate the current request with all its lines"""
+        self.ensure_one()
+        
+        # Create a copy of the request
+        default_vals = {
+            'name': 'New',  # Will be replaced by sequence in create method
+            'request_date': fields.Date.context_today(self),
+            'state': 'draft',
+            'picking_id': False,  # Clear the picking reference
+            'rejection_reason': False,  # Clear rejection reason
+            'reason': False,  # Clear auto reject reason
+        }
+        
+        # Copy the request
+        new_request = self.copy(default_vals)
+        
+        # Return action to open the duplicated request
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Duplicated Request'),
+            'res_model': 'internal.consume.request',
+            'res_id': new_request.id,
+            'view_mode': 'form',
+            'target': 'current',
+            'context': {'form_view_initial_mode': 'edit'},
+        }
 
     def unlink(self):
         """Prevent deletion of non-draft records"""

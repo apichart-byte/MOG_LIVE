@@ -66,26 +66,30 @@
                             <field name="mo_ids" widget="many2many_tags"
                                    domain="[('company_id', '=', company_id), ('state', 'in', ['confirmed', 'progress', 'to_close'])]"
                                    context="{'form_view_ref': 'mrp.mrp_production_form_view'}"
-                                   placeholder="Select Manufacturing Orders..."/>
+                                   placeholder="Select Manufacturing Orders..."
+                                   readonly="state != 'draft'"/>
                             <field name="picking_type_id"
-                                   domain="[('code', '=', 'internal'), ('company_id', '=', company_id)]"/>
-                            <field name="request_date"/>
-                            <field name="requested_by"/>
+                                   domain="[('code', '=', 'internal'), ('company_id', '=', company_id)]"
+                                   readonly="state != 'draft'"/>
+                            <field name="request_date" readonly="state != 'draft'"/>
+                            <field name="requested_by" readonly="state != 'draft'"/>
                         </group>
                         <group>
                             <field name="location_id" 
                                    domain="[('usage', '=', 'internal'), ('company_id', 'in', [company_id, False])]"
-                                   required="1"/>
+                                   required="1"
+                                   readonly="state != 'draft'"/>
                             <field name="location_dest_id" 
                                    domain="[('usage', '=', 'internal'), ('company_id', 'in', [company_id, False])]"
-                                   required="1"/>
+                                   required="1"
+                                   readonly="state != 'draft'"/>
                             <field name="qty_issued_total" readonly="1"/>
                             <field name="qty_remaining_total" readonly="1"/>
                         </group>
                     </group>
                     <notebook>
                         <page string="Request Lines" name="lines">
-                            <field name="line_ids">
+                            <field name="line_ids" readonly="state != 'draft'">
                                 <tree editable="bottom" decoration-success="qty_remaining == 0" 
                                       decoration-warning="qty_remaining > 0">
                                     <field name="product_id" 
@@ -136,7 +140,8 @@
                             </field>
                         </page>
                         <page string="Notes" name="notes">
-                            <field name="note" placeholder="Add any notes about this stock request..."/>
+                            <field name="note" placeholder="Add any notes about this stock request..." 
+                                   readonly="state != 'draft'"/>
                         </page>
                     </notebook>
                 </sheet>

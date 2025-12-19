@@ -236,6 +236,8 @@ class MrpStockRequest(models.Model):
         required=True,
         default=lambda self: self.env.company,
         tracking=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     mo_ids = fields.Many2many(
         "mrp.production",
@@ -245,12 +247,16 @@ class MrpStockRequest(models.Model):
         string="Manufacturing Orders",
         domain="[('company_id', '=', company_id), ('state', 'in', ['confirmed', 'progress', 'to_close'])]",
         tracking=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     line_ids = fields.One2many(
         "mrp.stock.request.line",
         "request_id",
         string="Request Lines",
         copy=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     picking_ids = fields.Many2many(
         "stock.picking",
@@ -269,6 +275,8 @@ class MrpStockRequest(models.Model):
         string="Operation Type",
         required=True,
         domain="[('code', '=', 'internal'), ('company_id', '=', company_id)]",
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     location_id = fields.Many2one(
         "stock.location",
@@ -276,6 +284,8 @@ class MrpStockRequest(models.Model):
         required=True,
         domain="[('usage', '=', 'internal'), ('company_id', 'in', [company_id, False])]",
         tracking=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     location_dest_id = fields.Many2one(
         "stock.location",
@@ -283,12 +293,16 @@ class MrpStockRequest(models.Model):
         required=True,
         domain="[('usage', '=', 'internal'), ('company_id', 'in', [company_id, False])]",
         tracking=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     request_date = fields.Date(
         string="Request Date",
         default=fields.Date.context_today,
         required=True,
         tracking=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     requested_by = fields.Many2one(
         "res.users",
@@ -296,6 +310,8 @@ class MrpStockRequest(models.Model):
         default=lambda self: self.env.user,
         required=True,
         tracking=True,
+        states={'draft': [('readonly', False)]},
+        readonly=True,
     )
     state = fields.Selection(
         [
@@ -321,7 +337,11 @@ class MrpStockRequest(models.Model):
         store=True,
         digits="Product Unit of Measure",
     )
-    note = fields.Text(string="Notes")
+    note = fields.Text(
+        string="Notes",
+        states={'draft': [('readonly', False)]},
+        readonly=True,
+    )
 
     @api.depends("line_ids.move_ids")
     def _compute_picking_ids(self):

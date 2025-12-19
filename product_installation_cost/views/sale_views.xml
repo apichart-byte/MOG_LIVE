@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <!-- Sale Order Form View - Order Lines -->
+        <record id="view_order_form_installation" model="ir.ui.view">
+            <field name="name">sale.order.form.installation</field>
+            <field name="model">sale.order</field>
+            <field name="inherit_id" ref="sale.view_order_form"/>
+            <field name="arch" type="xml">
+                <!-- Extend order lines in the tree view -->
+                <xpath expr="//field[@name='order_line']/tree//field[@name='price_unit']" position="after">
+                    <field name="state" column_invisible="1"/>
+                    <field name="installation_cost" 
+                           optional="hide"
+                           widget="monetary"
+                           readonly="1"/>
+                    <field name="include_installation" 
+                           optional="hide"
+                           readonly="state in ['sale', 'done']"/>
+                </xpath>
+
+                <!-- Extend order lines in the form view -->
+                <xpath expr="//field[@name='order_line']/form//field[@name='price_unit']" position="after">
+                    <field name="state" invisible="1"/>
+                    <field name="base_price" 
+                           invisible="1"/>
+                    <field name="installation_cost" 
+                           readonly="1"
+                           widget="monetary"
+                           invisible="installation_cost == 0"/>
+                    <field name="include_installation" 
+                           readonly="state in ['sale', 'done']"
+                           invisible="installation_cost == 0"/>
+                </xpath>
+            </field>
+        </record>
+    </data>
+</odoo>

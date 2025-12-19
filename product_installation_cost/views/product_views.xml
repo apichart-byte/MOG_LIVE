@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <!-- Product Template Form View -->
+        <record id="product_template_form_view_installation" model="ir.ui.view">
+            <field name="name">product.template.form.installation</field>
+            <field name="model">product.template</field>
+            <field name="inherit_id" ref="product.product_template_only_form_view"/>
+            <field name="arch" type="xml">
+                <!-- Add installation cost in Sales tab after sales_price -->
+                <xpath expr="//group[@name='sale']" position="inside">
+                    <group string="Installation" name="installation_group">
+                        <field name="installation_cost" 
+                               widget="monetary"
+                               options="{'currency_field': 'currency_id'}"
+                               help="Additional cost for installation. Sale users can include this in quotations."/>
+                    </group>
+                </xpath>
+            </field>
+        </record>
+
+        <!-- Product Product Form View -->
+        <record id="product_product_form_view_installation" model="ir.ui.view">
+            <field name="name">product.product.form.installation</field>
+            <field name="model">product.product</field>
+            <field name="inherit_id" ref="product.product_normal_form_view"/>
+            <field name="arch" type="xml">
+                <!-- Add installation cost in Sales tab -->
+                <xpath expr="//group[@name='sale']" position="inside">
+                    <group string="Installation" name="installation_group">
+                        <field name="installation_cost" 
+                               widget="monetary"
+                               options="{'currency_field': 'currency_id'}"
+                               help="Additional cost for installation. Sale users can include this in quotations."/>
+                    </group>
+                </xpath>
+            </field>
+        </record>
+    </data>
+</odoo>

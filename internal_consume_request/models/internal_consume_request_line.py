@@ -11,6 +11,13 @@ class InternalConsumeRequestLine(models.Model):
 
     sequence = fields.Integer(string='Sequence', default=10)
     
+    line_number = fields.Integer(
+        string='No.',
+        compute='_compute_line_number',
+        store=True,
+        help='Line number in the request'
+    )
+    
     request_id = fields.Many2one(
         'internal.consume.request',
         string='Request',
@@ -77,6 +84,33 @@ class InternalConsumeRequestLine(models.Model):
         store=True,
         readonly=True
     )
+    
+    analytic_distribution = fields.Json(
+        string='Analytic Distribution',
+        copy=True,
+        store=True,
+        default={}
+    )
+    
+    analytic_precision = fields.Integer(
+        string="Analytic Precision",
+        default=lambda self: self.env['decimal.precision'].precision_get('Percentage Analytic')
+    )
+
+    @api.depends('request_id', 'sequence')
+    def _compute_line_number(self):
+        """Compute line number based on sequence order"""
+        for line in self:
+            if line.request_id:
+                # Get all lines sorted by sequence
+                sorted_lines = line.request_id.line_ids.sorted('sequence')
+                # Find the position of current line
+                for index, sorted_line in enumerate(sorted_lines, 1):
+                    if sorted_line.id == line.id:
+                        line.line_number = index
+                        break
+            else:
+                line.line_number = 0
 
     @api.depends('product_id')
     def _compute_description(self):
@@ -146,6 +180,13 @@ class InternalConsumeRequestLine(models.Model):
                     _('Product %s is not a consumable or stockable product.') % line.product_id.display_name
                 )
 
+    @api.constrains('analytic_distribution')
+    def _check_analytic_distribution(self):
+        """Ensure analytic distribution is not empty (for visibility, real check is in action_submit)"""
+        # Constraint disabled here - real validation happens in action_submit() on the parent model
+        # This allows users to create/duplicate lines and fill analytics incrementally
+        pass
+
     @api.onchange('qty_requested', 'available_qty')
     def _onchange_qty_check_availability(self):
         """Warning if requested qty > available qty"""
@@ -166,3 +207,56 @@ class InternalConsumeRequestLine(models.Model):
                             )
                         }
                     }
+
+    def copy(self, default=None):
+        """Override copy method to ensure all fields are properly duplicated"""
+        if default is None:
+            default = {}
+        
+        # IMPORTANT: Preserve the request_id (parent relationship)
+        if 'request_id' not in default and self.request_id:
+            default['request_id'] = self.request_id.id
+        
+        # Copy key fields explicitly
+        if 'product_id' not in default and self.product_id:
+            default['product_id'] = self.product_id.id
+        
+        if 'qty_requested' not in default:
+            default['qty_requested'] = self.qty_requested
+        
+        if 'product_uom_id' not in default and self.product_uom_id:
+            default['product_uom_id'] = self.product_uom_id.id
+        
+        if 'description' not in default and self.description:
+            default['description'] = self.description
+        
+        # Ensure analytic_distribution is copied
+        if 'analytic_distribution' not in default:
+            if self.analytic_distribution:
+                default['analytic_distribution'] = self.analytic_distribution
+            else:
+                default['analytic_distribution'] = {}
+        
+        # Ensure sequence doesn't duplicate
+        if 'sequence' not in default:
+            default['sequence'] = self.sequence + 10
+        
+        return super().copy(default)
+
+    def action_duplicate_line(self):
+        """Action to duplicate the current line"""
+        self.ensure_one()
+        
+        # Ensure the current line is saved before duplication
+        if not self.id:
+            # If line not saved yet, save it first
+            self.flush()
+        
+        # Create a copy of this line
+        copied_line = self.copy()
+        
+        # Refresh the parent form to show the new line
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'reload',
+        }
