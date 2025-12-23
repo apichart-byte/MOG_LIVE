@@ -28,10 +28,13 @@ class AccountPartialReconcile(models.Model):
         if len(payment) == 1:
             self = self.with_context(payment_id=payment.id)
 
-        if (
-            self.debit_move_id.move_type == "in_refund"
-            and self.credit_move_id.move_type == "in_invoice"
-        ):
+        # Check if any record is a net refund/invoice scenario
+        net_invoice_refund = any(
+            rec.debit_move_id.move_type == "in_refund"
+            and rec.credit_move_id.move_type == "in_invoice"
+            for rec in self
+        )
+        if net_invoice_refund:
             self = self.with_context(net_invoice_refund=1)
 
         moves = super()._create_tax_cash_basis_moves()

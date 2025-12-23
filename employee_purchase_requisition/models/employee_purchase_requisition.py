@@ -357,7 +357,7 @@ class PurchaseRequisition(models.Model):
                 purchase_orders[vendor_id] = []
 
             line_vals = {
-                'name': rec.product_id.name,
+                'name': rec.description or rec.product_id.name,
                 'product_id': rec.product_id.id,
                 'product_qty': rec.quantity,
                 'product_uom': rec.product_id.uom_po_id.id,
@@ -387,6 +387,7 @@ class PurchaseRequisition(models.Model):
                 'order_line': order_lines,
                 'destination_location_id': self.destination_location_id.id,
                 'picking_type_id': picking_type_id,
+                'notes': self.requisition_description or '',
             })
 
         if purchase_orders:

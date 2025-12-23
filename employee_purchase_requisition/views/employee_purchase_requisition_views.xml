@@ -279,6 +279,9 @@
         <field name="model">employee.purchase.requisition</field>
         <field name="arch" type="xml">
             <search string="Search Tips">
+                <field name="name"/>
+                <field name="employee_id"/>
+                <field name="dept_id"/>
                 <group expand="1" string="Group By">
                     <filter string="Employee" name="employee_id"
                             context="{'group_by':'employee_id', 'residual_visible':True}"/>
