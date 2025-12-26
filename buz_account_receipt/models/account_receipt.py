@@ -306,18 +306,20 @@ class AccountReceipt(models.Model):
         help="Sum of amount_to_collect from all lines - represents what should be collected in this receipt"
     )
     amount_total_words = fields.Char(
-        string="Amount in Words",
+        string="Amount in Words (Thai)",
         compute="_compute_amount_total_words",
         store=True,
         readonly=True,
+        help="Amount in Thai words (e.g., 'หนึ่งพันบาทถ้วน')"
     )
     # Sum of invoice amounts included in this receipt (regardless of paid)
     amount_invoice_total = fields.Monetary(string="Invoice Total", currency_field="currency_id", compute="_compute_amount_invoice_total", store=True)
     amount_invoice_total_words = fields.Char(
-        string="Invoice Amount in Words",
+        string="Invoice Amount in Words (Thai)",
         compute="_compute_amount_invoice_total_words",
         store=True,
         readonly=True,
+        help="Invoice total amount in Thai words"
     )
 
     # Moves already used in receipts (to help filter selection)
@@ -440,31 +442,127 @@ class AccountReceipt(models.Model):
             rec.state = "posted"
         return True
 
+    def _amount_to_thai_text(self, amount):
+        """
+        Convert number to Thai text for baht and satang
+        Example: 1250.50 -> 'หนึ่งพันสองร้อยห้าสิบบาทห้าสิบสตางค์'
+        """
+        if amount == 0:
+            return 'ศูนย์บาทถ้วน'
+        
+        # Thai number words
+        ones = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า']
+        
+        def _convert_group(num):
+            """Convert a number less than 1000000 to Thai text"""
+            if num == 0:
+                return ''
+            
+            result = ''
+            
+            # แสน (hundred thousands)
+            if num >= 100000:
+                hundreds_thousands = num // 100000
+                if hundreds_thousands == 1:
+                    result += 'หนึ่งแสน'
+                elif hundreds_thousands == 2:
+                    result += 'สองแสน'
+                else:
+                    result += ones[hundreds_thousands] + 'แสน'
+                num %= 100000
+            
+            # หมื่น (ten thousands)
+            if num >= 10000:
+                ten_thousands = num // 10000
+                if ten_thousands == 1:
+                    result += 'หนึ่งหมื่น'
+                elif ten_thousands == 2:
+                    result += 'สองหมื่น'
+                else:
+                    result += ones[ten_thousands] + 'หมื่น'
+                num %= 10000
+            
+            # พัน (thousands)
+            if num >= 1000:
+                thousands = num // 1000
+                if thousands == 1:
+                    result += 'หนึ่งพัน'
+                elif thousands == 2:
+                    result += 'สองพัน'
+                else:
+                    result += ones[thousands] + 'พัน'
+                num %= 1000
+            
+            # ร้อย (hundreds)
+            if num >= 100:
+                hundreds = num // 100
+                if hundreds == 1:
+                    result += 'หนึ่งร้อย'
+                elif hundreds == 2:
+                    result += 'สองร้อย'
+                else:
+                    result += ones[hundreds] + 'ร้อย'
+                num %= 100
+            
+            # สิบ (tens)
+            if num >= 10:
+                tens = num // 10
+                if tens == 1:
+                    result += 'สิบ'
+                elif tens == 2:
+                    result += 'ยี่สิบ'
+                else:
+                    result += ones[tens] + 'สิบ'
+                num %= 10
+            
+            # หน่วย (ones)
+            if num > 0:
+                if num == 1 and len(result) > 0:
+                    result += 'เอ็ด'
+                else:
+                    result += ones[num]
+            
+            return result
+        
+        # Split into baht and satang
+        baht = int(amount)
+        satang = int(round((amount - baht) * 100))
+        
+        result = ''
+        
+        # Process millions
+        if baht >= 1000000:
+            millions = baht // 1000000
+            result += _convert_group(millions) + 'ล้าน'
+            baht %= 1000000
+        
+        # Process remaining baht
+        if baht > 0:
+            result += _convert_group(baht)
+        
+        result += 'บาท'
+        
+        # Process satang
+        if satang > 0:
+            result += _convert_group(satang) + 'สตางค์'
+        else:
+            result += 'ถ้วน'
+        
+        return result
+
     @api.depends('amount_total', 'currency_id')
     def _compute_amount_total_words(self):
-        # Convert amount_total to words (Thai for THB, fallback to English)
-        try:
-            from num2words import num2words
-        except Exception:
-            num2words = None
         for rec in self:
-            if rec.amount_total is not None and rec.currency_id:
-                amount = "%.2f" % rec.amount_total
-                int_part, dec_part = amount.split('.')
-                baht = int(int_part)
-                satang = int(dec_part)
-                if num2words and rec.currency_id.name == 'THB':
-                    baht_text = num2words(baht, lang='th').replace('เอ็ดบาท', 'หนึ่งบาท')
-                    if satang > 0:
-                        satang_text = num2words(satang, lang='th').replace('เอ็ด', 'หนึ่ง')
-                        rec.amount_total_words = f"{baht_text}บาท {satang_text}สตางค์"
-                    else:
-                        rec.amount_total_words = f"{baht_text}บาทถ้วน"
-                elif num2words:
-                    rec.amount_total_words = num2words(rec.amount_total, lang='en').title()
+            if rec.amount_total and rec.currency_id:
+                if rec.currency_id.name == 'THB':
+                    rec.amount_total_words = rec._amount_to_thai_text(rec.amount_total)
                 else:
-                    # num2words not installed; fallback to empty string
-                    rec.amount_total_words = ''
+                    # For other currencies, use English
+                    try:
+                        from num2words import num2words
+                        rec.amount_total_words = num2words(rec.amount_total, lang='en').title() + ' ' + rec.currency_id.name
+                    except Exception:
+                        rec.amount_total_words = f"{rec.amount_total:.2f} {rec.currency_id.name}"
             else:
                 rec.amount_total_words = ''
 
@@ -475,27 +573,17 @@ class AccountReceipt(models.Model):
 
     @api.depends('amount_invoice_total', 'currency_id')
     def _compute_amount_invoice_total_words(self):
-        try:
-            from num2words import num2words
-        except Exception:
-            num2words = None
         for rec in self:
-            if rec.amount_invoice_total is not None and rec.currency_id:
-                amount = "%.2f" % rec.amount_invoice_total
-                int_part, dec_part = amount.split('.')
-                baht = int(int_part)
-                satang = int(dec_part)
-                if num2words and rec.currency_id.name == 'THB':
-                    baht_text = num2words(baht, lang='th').replace('เอ็ดบาท', 'หนึ่งบาท')
-                    if satang > 0:
-                        satang_text = num2words(satang, lang='th').replace('เอ็ด', 'หนึ่ง')
-                        rec.amount_invoice_total_words = f"{baht_text}บาท {satang_text}สตางค์"
-                    else:
-                        rec.amount_invoice_total_words = f"{baht_text}บาทถ้วน"
-                elif num2words:
-                    rec.amount_invoice_total_words = num2words(rec.amount_invoice_total, lang='en').title()
+            if rec.amount_invoice_total and rec.currency_id:
+                if rec.currency_id.name == 'THB':
+                    rec.amount_invoice_total_words = rec._amount_to_thai_text(rec.amount_invoice_total)
                 else:
-                    rec.amount_invoice_total_words = ''
+                    # For other currencies, use English
+                    try:
+                        from num2words import num2words
+                        rec.amount_invoice_total_words = num2words(rec.amount_invoice_total, lang='en').title() + ' ' + rec.currency_id.name
+                    except Exception:
+                        rec.amount_invoice_total_words = f"{rec.amount_invoice_total:.2f} {rec.currency_id.name}"
             else:
                 rec.amount_invoice_total_words = ''
 

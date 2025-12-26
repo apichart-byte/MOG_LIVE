@@ -54,6 +54,7 @@
           <button name="action_register_batch_payment" string="Register Batch Payment" type="object" 
                   invisible="state != 'posted'" class="btn btn-primary"/>
           <button name="action_print_receipt" string="Print Receipt" type="object" invisible="state not in ['draft', 'posted']" class="btn btn-primary"/>
+          <button name="%(buz_account_receipt.action_report_account_receipt_preprint)d" string="Print Receipt Preprint" type="action" invisible="state not in ['draft', 'posted']" class="btn btn-info"/>
           <field name="state" widget="statusbar" statusbar_visible="draft,posted,cancel"/>
         </header>
         <sheet>

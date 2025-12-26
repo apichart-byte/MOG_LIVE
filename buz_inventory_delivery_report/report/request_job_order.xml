@@ -6,13 +6,13 @@
         <field name="default" eval="True"/>
         <field name="format">A4</field>
         <field name="orientation">Portrait</field>
-        <field name="margin_top">10</field>
-        <field name="margin_bottom">10</field>
-        <field name="margin_left">6</field>
-        <field name="margin_right">6</field>
+        <field name="margin_top">3</field>
+        <field name="margin_bottom">3</field>
+        <field name="margin_left">3</field>
+        <field name="margin_right">3</field>
         <field name="header_line" eval="False"/>
         <field name="header_spacing">0</field>
-        <field name="dpi">90</field>
+        <field name="dpi">96</field>
     </record> 
 
     <template id="request_job_order_document">
@@ -29,15 +29,13 @@
                             }
                             
                             @page {
-                                margin-top: 0mm;
-                                margin-bottom: 10mm;
-                                margin-left: 10mm;
-                                margin-right: 10mm;
+                                size: A4 portrait;
+                                margin: 3mm 3mm 3mm 3mm;
                             }
                             
                             body, .page, .row {
-                                margin-top: 0 !important;
-                                padding-top: 0 !important;
+                                margin: 0 !important;
+                                padding: 0 !important;
                             }
                             
                             html, body, page, table, th, td, div, p, span, h1, h2, h3, h4, h5, h6 {

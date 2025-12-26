@@ -11,6 +11,7 @@ class StockPicking(models.Model):
             return ''
     vehicle_plate = fields.Char(string="Vehicle Plate")
     driver = fields.Char(string="Driver")
+    dispatch_location = fields.Char(string="สถานที่จ่ายสินค้า", compute='_compute_dispatch_location')
     field1 = fields.Char(string="เลขที่ใบขออนุมัติเปลี่ยนสินค้า")
     price_unit = fields.Float(string="ราคาต่อหน่วย")  # เพิ่มราคาต่อหน่วย (unit price)
     price_subtotal = fields.Float(string="จำนวนเงิน", compute='_compute_price_subtotal', store=True)  # คำนวณจำนวนเงิน (subtotal)
@@ -44,6 +45,29 @@ class StockPicking(models.Model):
         string='Sale Order',
         help='ใบสั่งขายที่เกี่ยวข้อง'
     )
+
+    @api.depends('picking_type_id', 'picking_type_id.warehouse_id', 'location_id')
+    def _compute_dispatch_location(self):
+        """Compute dispatch location from warehouse or location"""
+        for picking in self:
+            warehouse = None
+            # First try to get warehouse from picking type
+            if picking.picking_type_id and picking.picking_type_id.warehouse_id:
+                warehouse = picking.picking_type_id.warehouse_id
+            # If not found, try to get warehouse from source location
+            elif picking.location_id:
+                warehouse = self.env['stock.warehouse'].search([
+                    '|', 
+                    ('lot_stock_id', '=', picking.location_id.id),
+                    ('view_location_id', 'parent_of', picking.location_id.id)
+                ], limit=1)
+            
+            if warehouse:
+                picking.dispatch_location = warehouse.name
+            elif picking.location_id:
+                picking.dispatch_location = picking.location_id.complete_name
+            else:
+                picking.dispatch_location = ''
 
     @api.depends('move_ids.product_uom_qty', 'price_unit')
 
