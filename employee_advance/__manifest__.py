@@ -1,6 +1,6 @@
 {
     'name': 'Employee Advance',
-    'version': '17.0.1.0.5',
+    'version': '17.0.1.0.6',
     'category': 'Human Resources',
     'summary': 'Employee Advance Management with Advance Box and Bill Clearing',
     'description': """
@@ -18,6 +18,7 @@
         - NEW: Each expense line creates a separate invoice line (no grouping by product)
         - NEW: Cancel button for refill history (both draft and posted states)
         - FIXED: Expense lines with same product code now remain separate in bills
+        - FIXED: WHT Clear Advance reconcile now only with specific bill (not other bills)
     """,
     'author': 'Apichart Ball',
     'website': 'https://www.yourcompany.com',
