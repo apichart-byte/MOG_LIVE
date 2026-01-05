@@ -89,13 +89,13 @@
             </group>
           </group>
           
-          <div class="oe_button_box" name="button_box" style="margin: 5px 0;">
-            <button name="action_view_payments" type="object" class="oe_stat_button" icon="fa-money" style="padding: 10px;">
-              <field string="Payments" name="payment_count" widget="statinfo" style="font-size: 14px;"/>
+          <div class="oe_button_box" name="button_box">
+            <button name="action_view_payments" type="object" class="oe_stat_button" icon="fa-money">
+              <field string="Payments" name="payment_count" widget="statinfo"/>
             </button>
           </div>
           
-          <group col="4" colspan="4" style="margin-top: 10px;">
+          <group col="4" colspan="4">
             <group name="delivery_info" string="Delivery Information" colspan="2">
               <field name="delivery_partner_id" readonly="state != 'draft'" string="Delivery Partner"/>
             </group>
