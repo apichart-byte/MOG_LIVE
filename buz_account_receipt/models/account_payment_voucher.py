@@ -458,6 +458,7 @@ class AccountPaymentVoucherLine(models.Model):
     payment_state = fields.Selection([
         ('not_paid', 'Not Paid'),
         ('in_payment', 'In Payment'),
+        ('partial', 'Partially Paid'),
         ('paid', 'Paid')
     ], compute="_compute_payment_state", store=True)
 
@@ -516,7 +517,17 @@ class AccountPaymentVoucherLine(models.Model):
                 # Derive payment state from the bill itself for accuracy
                 bill_payment_state = line.move_id.payment_state
                 if bill_payment_state:
-                    line.payment_state = bill_payment_state
+                    # Map bill payment states to voucher line payment states
+                    # account.move may have states like 'reversed', 'overpaid' that we need to handle
+                    if bill_payment_state in ('not_paid', 'in_payment', 'partial', 'paid'):
+                        line.payment_state = bill_payment_state
+                    elif bill_payment_state == 'reversed':
+                        line.payment_state = 'paid'  # Reversed bills are considered paid
+                    elif bill_payment_state == 'overpaid':
+                        line.payment_state = 'paid'  # Overpaid bills are considered paid
+                    else:
+                        # For any other unknown states, default to not_paid
+                        line.payment_state = 'not_paid'
                 else:
                     # Fallback to payment-based logic if bill state is not available
                     if line.payment_ids:
