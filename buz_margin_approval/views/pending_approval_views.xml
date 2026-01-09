@@ -4,9 +4,9 @@
     <record id="action_pending_approval_orders" model="ir.actions.act_window">
         <field name="name">Orders Pending Approval</field>
         <field name="res_model">sale.order</field>
-        <field name="view_mode">tree,form,kanban</field>
-        <field name="domain">[('margin_approval_state', '=', 'pending')]</field>
-        <field name="context">{'search_default_pending_margin_approval': 1}</field>
+        <field name="view_mode">tree,form</field>
+        <field name="domain">[('approval_state', '=', 'pending')]</field>
+        <field name="context">{'search_default_pending_approval': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 No sales orders pending approval!
@@ -16,7 +16,7 @@
     
     <!-- Add menu for pending approvals -->
     <menuitem id="menu_pending_approval_orders"
-              name="Margin Approvals"
+              name="Pending Approvals"
               action="action_pending_approval_orders"
               parent="sale.menu_sale_order"
               sequence="5"

@@ -10,11 +10,12 @@
                         <field name="sale_order_id" readonly="1"/>
                         <field name="margin_percentage"/>
                         <field name="rule_id"/>
+                        <field name="rule_line_id"/>
                         <field name="note" placeholder="Add notes for the approval request..."/>
                     </group>
                 </sheet>
                 <footer>
-                    <button name="action_send" string="Send" type="object" class="btn-primary"/>
+                    <button name="action_send" string="Send Request" type="object" class="btn-primary"/>
                     <button string="Cancel" class="btn-secondary" special="cancel"/>
                 </footer>
             </form>

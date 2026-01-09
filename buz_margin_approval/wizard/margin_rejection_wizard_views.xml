@@ -6,18 +6,19 @@
         <field name="arch" type="xml">
             <form string="Reject Margin">
                 <sheet>
-                    <div class="alert alert-info" role="alert">
-                        Please provide a reason for rejecting the margin approval request.
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Warning:</strong> Please provide a reason for rejecting the margin approval request.
                     </div>
                     <group>
                         <field name="sale_order_id" readonly="1"/>
                         <field name="margin_percentage" readonly="1"/>
                         <field name="rule_id" readonly="1"/>
+                        <field name="rule_line_id" readonly="1"/>
                         <field name="rejection_reason" placeholder="Please provide a detailed explanation for rejecting this request..." required="1"/>
                     </group>
                 </sheet>
                 <footer>
-                    <button name="action_reject" string="Reject" type="object" class="btn-danger"/>
+                    <button name="action_reject" string="Confirm Rejection" type="object" class="btn-danger"/>
                     <button string="Cancel" class="btn-secondary" special="cancel"/>
                 </footer>
             </form>

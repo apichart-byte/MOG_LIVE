@@ -67,17 +67,24 @@
                             </div>
                             <div class="col-6">
                                 <strong>Approval Status:</strong>
-                                <span t-if="doc.margin_approval_state == 'pending'" class="badge badge-warning">Pending</span>
-                                <span t-if="doc.margin_approval_state == 'approved'" class="badge badge-success">Approved</span>
-                                <span t-if="doc.margin_approval_state == 'rejected'" class="badge badge-danger">Rejected</span>
-                                <span t-if="not doc.margin_approval_state" class="badge badge-info">Not Required</span>
+                                <span t-if="doc.approval_state == 'pending'" class="badge badge-warning">Pending</span>
+                                <span t-if="doc.approval_state == 'approved'" class="badge badge-success">Approved</span>
+                                <span t-if="doc.approval_state == 'rejected'" class="badge badge-danger">Rejected</span>
+                                <span t-if="doc.approval_state == 'not_required'" class="badge badge-info">Not Required</span>
                             </div>
                         </div>
                         
                         <div class="row mt16" t-if="doc.margin_rule_id">
                             <div class="col-12">
-                                <strong>Applied Rule:</strong> <span t-field="doc.margin_rule_id.name"/> 
-                                (Min: <span t-field="doc.margin_rule_id.min_margin"/>% - Max: <span t-field="doc.margin_rule_id.max_margin"/>%)
+                                <strong>Applied Rule:</strong> <span t-field="doc.margin_rule_id.name"/>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt16" t-if="doc.margin_rule_line_id">
+                            <div class="col-12">
+                                <strong>Margin Range:</strong>
+                                Min: <span t-field="doc.margin_rule_line_id.min_margin"/>% - 
+                                Max: <span t-field="doc.margin_rule_line_id.max_margin"/>%
                             </div>
                         </div>
                         

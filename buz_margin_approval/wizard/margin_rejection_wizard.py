@@ -11,6 +11,7 @@ class MarginRejectionWizard(models.TransientModel):
     sale_order_id = fields.Many2one('sale.order', string='Sale Order', required=True)
     margin_percentage = fields.Float(related='sale_order_id.margin_percentage', string='Current Margin %', readonly=True)
     rule_id = fields.Many2one(related='sale_order_id.margin_rule_id', string='Applied Rule', readonly=True)
+    rule_line_id = fields.Many2one(related='sale_order_id.margin_rule_line_id', string='Applied Margin Line', readonly=True)
     rejection_reason = fields.Text(string='Rejection Reason', required=True)
     
     def action_reject(self):
@@ -22,16 +23,16 @@ class MarginRejectionWizard(models.TransientModel):
         
         # Check if user has permission to reject
         sale_order = self.sale_order_id
-        if self.env.user not in sale_order.margin_approval_user_ids and \
-           not self.env.user.has_group('buz_margin_approval.group_margin_approval'):
+        if not sale_order._can_approve_margin():
             raise UserError(_("You are not authorized to reject this order's margin."))
             
         # Reject the margin
-        sale_order.margin_approval_state = 'rejected'
+        sale_order.approval_state = 'rejected'
+        sale_order.approved_user_ids = [(5, 0, 0)]  # Clear approvals
         
         # Post rejection message with reason
-        body = _(f"Margin Rejected by {self.env.user.name}")
-        body += f"<br/><strong>Reason:</strong> {self.rejection_reason}"
+        body = _("Margin Rejected by %s") % self.env.user.name
+        body += "<br/><strong>" + _("Reason:") + "</strong> " + self.rejection_reason
         sale_order.message_post(body=body)
         
         # Mark mail activities as rejected with reason
