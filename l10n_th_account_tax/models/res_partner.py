@@ -1,7 +1,7 @@
 # Copyright 2021 Ecosoft Co., Ltd. (http://ecosoft.co.th)
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
-from odoo import api, fields, models
+from odoo import _, api, fields, models
 
 
 class ResPartner(models.Model):
@@ -33,7 +33,7 @@ class ResPartner(models.Model):
         ctx = self._get_context_pit_monitoring()
         domain = [("is_pit", "=", True), ("partner_id", "=", self.id)]
         return {
-            "name": self.env._("Personal Income Tax Yearly"),
+            "name": _("Personal Income Tax Yearly"),
             "res_model": "account.withholding.move",
             "view_mode": "pivot,list,graph",
             "context": ctx,

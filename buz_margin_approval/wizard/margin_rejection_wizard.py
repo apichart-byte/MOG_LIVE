@@ -38,4 +38,7 @@ class MarginRejectionWizard(models.TransientModel):
         # Mark mail activities as rejected with reason
         sale_order._mark_margin_approval_activities_rejected(self.rejection_reason)
         
+        # Create activity to notify salesperson
+        sale_order._create_approval_notification_activity('rejected')
+        
         return {'type': 'ir.actions.act_window_close'}

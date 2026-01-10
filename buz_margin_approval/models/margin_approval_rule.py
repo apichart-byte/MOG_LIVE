@@ -120,3 +120,16 @@ class MarginApprovalRuleLine(models.Model):
             ('max_margin', '>=', margin_percentage),
         ], limit=1)
         return line
+    
+    def name_get(self):
+        """Custom display name showing margin range"""
+        result = []
+        for line in self:
+            name = "%.1f%% - %.1f%%" % (line.min_margin, line.max_margin)
+            if line.approver_ids:
+                approver_names = ', '.join(line.approver_ids.mapped('name')[:2])
+                if len(line.approver_ids) > 2:
+                    approver_names += ', ...'
+                name += " (%s)" % approver_names
+            result.append((line.id, name))
+        return result

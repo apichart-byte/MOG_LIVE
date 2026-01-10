@@ -62,6 +62,47 @@ class SaleOrder(models.Model):
         string='Users Who Approved',
         copy=False
     )
+    can_current_user_approve = fields.Boolean(
+        string='Can Current User Approve',
+        compute='_compute_can_current_user_approve',
+        search='_search_can_current_user_approve',
+        help='Check if current user can approve this order'
+    )
+    
+    def _compute_can_current_user_approve(self):
+        """Check if current user can approve each order"""
+        for order in self:
+            order.can_current_user_approve = order._can_approve_margin()
+    
+    def _search_can_current_user_approve(self, operator, value):
+        """Search method for can_current_user_approve field
+        
+        Shows orders based on user's role:
+        - Admin group (group_margin_approval_admin): sees ALL pending orders
+        - Regular approvers: see only orders within their authorized margin ranges
+        """
+        current_user = self.env.user
+        
+        # Admin group can see ALL pending orders (not restricted by margin range)
+        if current_user.has_group('buz_margin_approval.group_margin_approval_admin'):
+            if (operator == '=' and value) or (operator == '!=' and not value):
+                return [('approval_state', '=', 'pending')]
+            else:
+                return [('id', '=', False)]
+        
+        # Regular approvers: only show orders where user is specifically in margin_approval_user_ids
+        # (which is calculated based on the order's margin and matching rule line)
+        if (operator == '=' and value) or (operator == '!=' and not value):
+            return [
+                ('approval_state', '=', 'pending'),
+                ('margin_approval_user_ids', 'in', current_user.id)
+            ]
+        else:
+            return [
+                '|',
+                ('approval_state', '!=', 'pending'),
+                ('margin_approval_user_ids', 'not in', current_user.id)
+            ]
     
     @api.depends('margin', 'amount_untaxed')
     def _compute_margin_percentage(self):
@@ -91,23 +132,84 @@ class SaleOrder(models.Model):
                 
                 order.margin_rule_line_id = line.id if line else False
                 order.margin_approval_user_ids = line.approver_ids if line else False
-                
-                # Update approval state
-                if line and order.approval_state == 'not_required':
-                    order.approval_state = 'pending'
-                elif not line and order.approval_state in ('pending', False):
-                    order.approval_state = 'not_required'
             else:
                 order.margin_rule_line_id = False
                 order.margin_approval_user_ids = False
-                if order.approval_state in ('pending', False):
-                    order.approval_state = 'not_required'
+    
+    def _create_approval_notification_activity(self, action_type):
+        """Create activity to notify salesperson about approval/rejection
+        
+        Args:
+            action_type: 'approved' or 'rejected'
+        """
+        self.ensure_one()
+        
+        if not self.user_id:
+            return
+        
+        activity_type = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
+        if not activity_type:
+            return
+        
+        if action_type == 'approved':
+            summary = _('✅ Margin Approved: %s') % self.name
+            note = f"""
+                <p><strong style="color: green;">Margin ได้รับการอนุมัติแล้ว</strong></p>
+                <p>Sales Order: <strong>{self.name}</strong></p>
+                <p>ลูกค้า: {self.partner_id.name}</p>
+                <p>Margin: <strong>{self.margin_percentage:.2f}%</strong></p>
+                <p>ยอดรวม: {self.amount_total:,.2f} {self.currency_id.symbol}</p>
+                <p>อนุมัติโดย: {self.env.user.name}</p>
+                <p><strong>คุณสามารถดำเนินการ "Confirm To SO" ได้แล้ว</strong></p>
+            """
+        else:  # rejected
+            summary = _('❌ Margin Rejected: %s') % self.name
+            note = f"""
+                <p><strong style="color: red;">Margin ถูกปฏิเสธ</strong></p>
+                <p>Sales Order: <strong>{self.name}</strong></p>
+                <p>ลูกค้า: {self.partner_id.name}</p>
+                <p>Margin: <strong>{self.margin_percentage:.2f}%</strong></p>
+                <p>ปฏิเสธโดย: {self.env.user.name}</p>
+                <p><strong>กรุณาตรวจสอบและแก้ไข quotation แล้วขออนุมัติใหม่</strong></p>
+            """
+        
+        # Delete old notification activities first
+        old_activities = self.env['mail.activity'].search([
+            ('res_model', '=', 'sale.order'),
+            ('res_id', '=', self.id),
+            ('user_id', '=', self.user_id.id),
+            ('activity_type_id', '=', activity_type.id),
+            ('summary', 'ilike', self.name),
+        ])
+        old_activities.unlink()
+        
+        # Create new activity
+        self.env['mail.activity'].create({
+            'activity_type_id': activity_type.id,
+            'user_id': self.user_id.id,
+            'res_id': self.id,
+            'res_model_id': self.env['ir.model'].sudo().search([('model', '=', 'sale.order')], limit=1).id,
+            'summary': summary,
+            'note': note,
+            'date_deadline': fields.Date.context_today(self),
+        })
     
     def _can_approve_margin(self):
-        """Check if current user can approve this order's margin"""
+        """Check if current user can approve this order's margin
+        
+        Returns True if:
+        - User has admin group (group_margin_approval_admin), OR
+        - User has general approval group (group_margin_approval), OR  
+        - User is in this order's margin_approval_user_ids
+        """
         self.ensure_one()
+        # Admin group can approve any order
+        if self.env.user.has_group('buz_margin_approval.group_margin_approval_admin'):
+            return True
+        # General approval group can approve
         if self.env.user.has_group('buz_margin_approval.group_margin_approval'):
             return True
+        # Or user must be in the specific approver list for this order
         return self.env.user in self.margin_approval_user_ids
     
     def action_confirm(self):
@@ -116,11 +218,12 @@ class SaleOrder(models.Model):
             # Check if user is in sales margin approver user group
             is_sales_user = self.env.user.has_group('buz_margin_approval.group_sales_margin_approver_user')
             
-            # If user is sales user and hasn't gone through Confirm To SO
-            if is_sales_user and order.confirm_flow_state != 'confirm_to_so':
+            # Sales users are NOT allowed to use "Confirm Sale" button at all
+            # They must use "Confirm To SO" and wait for Admin/Finance to confirm
+            if is_sales_user:
                 raise UserError(_(
-                    "You must use 'Confirm To SO' button instead of 'Confirm Sale'. "
-                    "Please click 'Confirm To SO' first."
+                    "Sales users cannot confirm orders directly.\n"
+                    "Please use 'Confirm To SO' button and wait for Admin/Finance to finalize the order."
                 ))
             
             # Check margin approval
@@ -148,12 +251,39 @@ class SaleOrder(models.Model):
         """Request margin approval from approvers"""
         self.ensure_one()
         
-        if self.approval_state not in ('not_required', 'pending', 'rejected', False):
-            raise UserError(_("This order does not require new approval request."))
+        # Check if already approved or pending
+        if self.approval_state == 'pending':
+            raise UserError(_("This order is already pending approval."))
         
+        if self.approval_state == 'approved':
+            raise UserError(_("This order has already been approved."))
+        
+        # Check if user is in any margin rule
+        if not self.margin_rule_id:
+            raise UserError(_(
+                "You are not assigned to any margin approval rule. "
+                "This quotation does not require margin approval."
+            ))
+        
+        # Check if order has lines
+        if not self.order_line:
+            raise UserError(_("Please add order lines before requesting margin approval."))
+        
+        # Check if margin is within approval range
+        if not self.margin_rule_line_id:
+            raise UserError(_(
+                "Your margin (%.2f%%) does not require approval. "
+                "The margin may be above the threshold or no approval rule is configured for this range."
+            ) % self.margin_percentage)
+        
+        # Check if there are approvers
         if not self.margin_approval_user_ids:
-            raise UserError(_("No approvers defined for this margin range."))
+            raise UserError(_(
+                "No approvers are defined for the margin range (%.2f%%). "
+                "Please contact your administrator to configure approvers."
+            ) % self.margin_percentage)
         
+        # All checks passed - proceed with approval request
         self.approval_state = 'pending'
         self.approved_user_ids = [(5, 0, 0)]  # Clear previous approvals
         
@@ -163,9 +293,6 @@ class SaleOrder(models.Model):
         
         # Create mail activities for approvers
         self._create_margin_approval_activities()
-        
-        # Send email notification
-        self._send_margin_approval_email()
         
         return True
     
@@ -197,6 +324,10 @@ class SaleOrder(models.Model):
         if self.approval_state == 'approved':
             body += _(" - All required approvals obtained")
         self.message_post(body=body)
+        
+        # Create activity for salesperson notification
+        if self.approval_state == 'approved':
+            self._create_approval_notification_activity('approved')
         
         return True
     
@@ -236,6 +367,80 @@ class SaleOrder(models.Model):
         
         return True
     
+    def action_cancel_confirm_to_so(self):
+        """Cancel Confirm To SO - Reset to draft and require re-approval"""
+        self.ensure_one()
+        
+        # Check if order is in confirm_to_so state
+        if self.confirm_flow_state != 'confirm_to_so':
+            raise UserError(_("This order is not in 'Confirm To SO' state."))
+        
+        # Reset states
+        self.confirm_flow_state = 'draft'
+        self.approval_state = 'rejected'  # Force re-approval
+        self.approved_user_ids = [(5, 0, 0)]  # Clear all approvals
+        
+        # Mark any pending activities as done
+        self._mark_margin_approval_activities_done()
+        
+        # Log in chatter
+        body = _(
+            "<strong>Confirm To SO Cancelled by %s</strong><br/>"
+            "Order has been reset to Quotation state.<br/>"
+            "Sales user must re-submit for margin approval."
+        ) % self.env.user.name
+        self.message_post(body=body)
+        
+        # Create activity for the salesperson
+        self._create_cancel_notification_activity()
+        
+        return True
+    
+    def _create_cancel_notification_activity(self):
+        """Create activity to notify salesperson about cancellation"""
+        self.ensure_one()
+        
+        if not self.user_id:
+            return
+        
+        activity_type = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
+        if not activity_type:
+            return
+        
+        summary = _('⚠️ Confirm To SO Cancelled: %s') % self.name
+        note = f"""
+            <p><strong style="color: orange;">Confirm To SO has been cancelled</strong></p>
+            <p>Sales Order: <strong>{self.name}</strong></p>
+            <p>Customer: {self.partner_id.name}</p>
+            <p>Cancelled by: {self.env.user.name}</p>
+            <p><strong>Action Required:</strong></p>
+            <ul>
+                <li>Review the quotation</li>
+                <li>Make necessary adjustments</li>
+                <li>Request margin approval again</li>
+            </ul>
+        """
+        
+        # Delete old activities first
+        old_activities = self.env['mail.activity'].search([
+            ('res_model', '=', 'sale.order'),
+            ('res_id', '=', self.id),
+            ('user_id', '=', self.user_id.id),
+            ('summary', 'ilike', self.name),
+        ])
+        old_activities.unlink()
+        
+        # Create new activity
+        self.env['mail.activity'].create({
+            'activity_type_id': activity_type.id,
+            'user_id': self.user_id.id,
+            'res_id': self.id,
+            'res_model_id': self.env['ir.model'].sudo().search([('model', '=', 'sale.order')], limit=1).id,
+            'summary': summary,
+            'note': note,
+            'date_deadline': fields.Date.context_today(self),
+        })
+    
     def write(self, vals):
         """Reset approval when price/discount changes"""
         reset_approval = False
@@ -254,46 +459,18 @@ class SaleOrder(models.Model):
         if reset_approval:
             for order in self:
                 if order.approval_state == 'approved':
-                    vals['approval_state'] = 'pending'
+                    vals['approval_state'] = 'not_required'  # Reset to allow re-request
                     vals['approved_user_ids'] = [(5, 0, 0)]  # Clear approvals
-                    # Recreate activities
+                    # Mark old activities as done
                     order._mark_margin_approval_activities_done()
-                    order._create_margin_approval_activities()
-                    order.message_post(body=_("Order modified - Approval reset to pending"))
+                    # Post message about reset
+                    order.message_post(body=_(
+                        "<strong>⚠️ Order Modified - Approval Reset</strong><br/>"
+                        "Price or quantity has been changed.<br/>"
+                        "Please request margin approval again."
+                    ))
         
         return super(SaleOrder, self).write(vals)
-    
-    def _send_margin_approval_email(self):
-        """Send email notification to approvers (in Thai)"""
-        self.ensure_one()
-        
-        for user in self.margin_approval_user_ids:
-            if not user.email:
-                continue
-                
-            mail_values = {
-                'subject': _('ขออนุมัติ Margin: %s') % self.name,
-                'email_from': self.company_id.email or self.env.user.email_formatted,
-                'email_to': user.email,
-                'body_html': f"""
-                    <p>เรียน {user.name},</p>
-                    <p>มีคำขออนุมัติ margin สำหรับใบเสนอราคาเลขที่ <strong>{self.name}</strong></p>
-                    <ul>
-                        <li>ลูกค้า: {self.partner_id.name}</li>
-                        <li>ยอดรวม: {self.amount_total:,.2f} {self.currency_id.symbol}</li>
-                        <li>Margin: <strong>{self.margin_percentage:.2f}%</strong></li>
-                        <li>พนักงานขาย: {self.user_id.name}</li>
-                        <li>ประเภทการอนุมัติ: {'ต้องอนุมัติทุกคน' if self.approval_type == 'all' else 'อนุมัติคนใดคนหนึ่ง' if self.approval_type == 'any' else '-'}</li>
-                    </ul>
-                    <p>กรุณาเข้าสู่ระบบเพื่อทำการอนุมัติหรือปฏิเสธคำขอนี้</p>
-                    <p>ขอบคุณครับ/ค่ะ</p>
-                """,
-                'auto_delete': True,
-                'model': 'sale.order',
-                'res_id': self.id,
-            }
-            
-            self.env['mail.mail'].sudo().create(mail_values).send()
     
     def _create_margin_approval_activities(self):
         """Create mail activity for each margin approver"""

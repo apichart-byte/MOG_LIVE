@@ -83,7 +83,7 @@
         <field name="name">Margin Approval Dashboard</field>
         <field name="res_model">sale.order</field>
         <field name="view_mode">kanban,tree,form</field>
-        <field name="domain">[('approval_state', '=', 'pending')]</field>
+        <field name="domain">[('approval_state', '=', 'pending'), ('can_current_user_approve', '=', True)]</field>
         <field name="context">{'search_default_pending_approval': 1}</field>
         <field name="view_id" ref="view_margin_approval_dashboard_kanban"/>
         <field name="help" type="html">

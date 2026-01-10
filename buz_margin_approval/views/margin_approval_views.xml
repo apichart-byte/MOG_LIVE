@@ -106,7 +106,7 @@
         <field name="name">Orders Pending Approval</field>
         <field name="res_model">sale.order</field>
         <field name="view_mode">tree,form</field>
-        <field name="domain">[('approval_state', '=', 'pending')]</field>
+        <field name="domain">[('approval_state', '=', 'pending'), ('can_current_user_approve', '=', True)]</field>
         <field name="context">{'search_default_pending_approval': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
