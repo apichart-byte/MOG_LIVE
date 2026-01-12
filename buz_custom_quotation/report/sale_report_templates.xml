@@ -88,15 +88,15 @@
 
 
 <!-- Page 2: Page -->
-<t t-set="items_per_page" t-value="15"/>
+<t t-set="items_per_page" t-value="6"/>
 <t t-set="total_items" t-value="len(doc.order_line)"/>
 <t t-set="total_pages" t-value="(total_items + items_per_page - 1) // items_per_page"/>
 
 
 <t t-set="groups_of_6" t-value="[doc.order_line[i:i+6] for i in range(0, len(doc.order_line), 6)]"/>
-<t t-set="page_num" t-value="0"/>
-<t t-foreach="groups_of_6" t-as="group">
-   <div t-attf-style="#{page_num != 0 and 'page-break-before: always;' or ''}">
+<t t-set="item_counter" t-value="0"/>
+<t t-foreach="groups_of_6" t-as="group" t-index="group_idx">
+   <div t-attf-style="#{group_idx != 0 and 'page-break-before: always;' or ''}">
 
 
 <div style="margin-top: 0;">
@@ -187,8 +187,9 @@
             </tr>
         </thead>
         <tbody>
-            <tr t-foreach="doc.order_line" t-as="line" t-index="line_index">
-                <td style="text-align: center; border: none; border-bottom: 1px solid #e3e3e3; padding: 10px 0;"><span style="background-color: #1E3A78; color: white; padding: 3px 8px; border-radius: 4px;">No.<t t-esc="line_index + 1"/></span></td>
+            <tr t-foreach="group" t-as="line">
+                <t t-set="item_counter" t-value="item_counter + 1"/>
+                <td style="text-align: center; border: none; border-bottom: 1px solid #e3e3e3; padding: 10px 0;"><span style="background-color: #1E3A78; color: white; padding: 3px 8px; border-radius: 4px; white-space: nowrap; display: inline-block;">No.<t t-esc="item_counter"/></span></td>
                 <td style="text-align: center; border: none; border-bottom: 1px solid #e3e3e3; padding: 10px 0;">
                     <div><span t-field="line.name"/></div>
                 </td>
@@ -235,15 +236,9 @@
         </tbody>
     </table>
 </div>
-<t t-set="page_num" t-value="page_num + 1"/>
  </div>
 </t>
 
-
-     <!-- Conditional page break based on number of items -->
-     <t t-if="len(doc.order_line) > 5">
-        <div style="page-break-before: always;"></div>
-    </t>
     <!-- Page 3: Conditions Page -->
     <div style="page-break-before: always; margin-top: 0;">
         <div style="text-align: left; margin-right: -10mm; margin-left: -10mm; background-color: #1E3A78; padding-left: 10mm; padding-right: 10mm;">

@@ -25,13 +25,13 @@
             
             <!-- Add buttons in header -->
             <xpath expr="//header/button[@name='action_confirm']" position="after">
-                <!-- Request Margin Approval button -->
+                <!-- Request Margin Approval button - Only for Sales Margin Approver User -->
                 <button name="action_request_margin_approval" 
                         type="object" 
                         string="Request Margin Approval" 
                         class="btn-primary"
                         invisible="state not in ('draft', 'sent') or approval_state in ('pending', 'approved')"
-                        groups="buz_margin_approval.group_margin_approval,buz_margin_approval.group_sales_margin_approver_user,buz_margin_approval.group_margin_approval_admin"/>
+                        groups="buz_margin_approval.group_sales_margin_approver_user"/>
                 
                 <!-- Approve Margin button -->
                 <button name="action_approve_margin" 
@@ -49,13 +49,21 @@
                         invisible="approval_state != 'pending' or state not in ('draft', 'sent')"
                         groups="buz_margin_approval.group_margin_approval"/>
                 
-                <!-- Confirm To SO button (for Sales Users) - Only show when explicitly approved -->
+                <!-- Confirm To SO button for Sales Users - Only when margin is approved -->
                 <button name="action_confirm_to_so" 
                         type="object" 
                         string="Confirm To SO" 
                         class="btn-warning"
                         invisible="state not in ('draft', 'sent') or confirm_flow_state != 'draft' or approval_state != 'approved'"
                         groups="buz_margin_approval.group_sales_margin_approver_user"/>
+                
+                <!-- Confirm To SO button for Margin Approvers - When approved or not required -->
+                <button name="action_confirm_to_so" 
+                        type="object" 
+                        string="Confirm To SO" 
+                        class="btn-warning"
+                        invisible="state not in ('draft', 'sent') or confirm_flow_state != 'draft' or approval_state not in ('approved', 'not_required')"
+                        groups="buz_margin_approval.group_margin_approval"/>
             </xpath>
             
             <!-- Add status bar indicator for confirm flow state -->

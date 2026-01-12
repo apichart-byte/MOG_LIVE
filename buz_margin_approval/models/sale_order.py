@@ -136,11 +136,12 @@ class SaleOrder(models.Model):
                 order.margin_rule_line_id = False
                 order.margin_approval_user_ids = False
     
-    def _create_approval_notification_activity(self, action_type):
+    def _create_approval_notification_activity(self, action_type, rejection_reason=None):
         """Create activity to notify salesperson about approval/rejection
         
         Args:
             action_type: 'approved' or 'rejected'
+            rejection_reason: Optional rejection reason to include in notification
         """
         self.ensure_one()
         
@@ -170,6 +171,15 @@ class SaleOrder(models.Model):
                 <p>ลูกค้า: {self.partner_id.name}</p>
                 <p>Margin: <strong>{self.margin_percentage:.2f}%</strong></p>
                 <p>ปฏิเสธโดย: {self.env.user.name}</p>
+            """
+            if rejection_reason:
+                note += f"""
+                <p><strong style="color: red;">เหตุผลการปฏิเสธ:</strong></p>
+                <p style="background-color: #ffeeee; padding: 10px; border-left: 4px solid red;">
+                    {rejection_reason}
+                </p>
+                """
+            note += """
                 <p><strong>กรุณาตรวจสอบและแก้ไข quotation แล้วขออนุมัติใหม่</strong></p>
             """
         
@@ -357,6 +367,14 @@ class SaleOrder(models.Model):
                 "Cannot proceed! This order requires margin approval. "
                 "Current approval status: %s"
             ) % dict(self._fields['approval_state'].selection).get(self.approval_state))
+        
+        # Check if all order lines have analytic account assigned
+        lines_without_analytic = self.order_line.filtered(lambda line: not line.analytic_distribution)
+        if lines_without_analytic:
+            raise UserError(_(
+                "Validation Error\n\n"
+                "One or more lines require a 100% analytic distribution."
+            ))
         
         # Update state
         self.confirm_flow_state = 'confirm_to_so'
