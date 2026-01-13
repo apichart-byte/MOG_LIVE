@@ -213,7 +213,7 @@ class WizardRefillAdvanceBox(models.TransientModel):
             move.action_post()
             _logger.info('✅ Journal entry posted successfully')
             
-            # Create refill record (use sudo to bypass permission checks)
+            # Create refill record
             refill_vals = {
                 'box_id': self.box_id.id,
                 'amount': self.amount,
@@ -226,14 +226,14 @@ class WizardRefillAdvanceBox(models.TransientModel):
                 'notes': self.notes or _('Refill via journal entry %s') % move.name,
             }
             
-            refill = self.env['advance.box.refill'].sudo().create(refill_vals)
+            refill = self.env['advance.box.refill'].create(refill_vals)
             _logger.info('✅ Refill record created: %s (ID: %s)', refill.name, refill.id)
             
-            # Refresh balance (use sudo to bypass permission checks)
-            self.box_id.sudo()._trigger_balance_recompute()
+            # Refresh balance
+            self.box_id._trigger_balance_recompute()
             
-            # Post message to chatter (use sudo to bypass permission checks)
-            self.box_id.sudo().message_post(
+            # Post message to chatter
+            self.box_id.message_post(
                 body=_('Advance box refilled with amount %s<br/>Journal Entry: %s<br/>Debit: %s<br/>Credit: %s') % (
                     self.amount, move.name, self.debit_account_id.display_name, self.credit_account_id.display_name
                 ),

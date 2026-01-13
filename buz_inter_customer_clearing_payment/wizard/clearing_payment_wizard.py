@@ -41,7 +41,21 @@ class BuzClearingPaymentWizard(models.TransientModel):
         'buz.clearing.payment.line', 'wizard_id', string='Allocations'
     )
     
+    # Credit Notes
+    credit_line_ids = fields.One2many(
+        'buz.clearing.payment.credit.line', 'wizard_id', string='Credit Notes'
+    )
+    
     # Computed fields
+    total_credit_note = fields.Monetary(
+        string='Total Credit Note', compute='_compute_totals',
+        currency_field='currency_id'
+    )
+    total_available = fields.Monetary(
+        string='Total Available', compute='_compute_totals',
+        currency_field='currency_id',
+        help='Payment Amount + Credit Notes'
+    )
     total_allocated = fields.Monetary(
         string='Total Allocated', compute='_compute_totals', 
         currency_field='currency_id'
@@ -52,6 +66,7 @@ class BuzClearingPaymentWizard(models.TransientModel):
     )
     state = fields.Selection([
         ('header', 'Payment Header'),
+        ('credit_notes', 'Select Credit Notes'),
         ('allocate', 'Allocate Invoices'),
         ('review', 'Review & Confirm'),
     ], string='State', default='header')
@@ -62,11 +77,15 @@ class BuzClearingPaymentWizard(models.TransientModel):
         for wizard in self:
             wizard.paying_partner_tax_id = wizard.paying_partner_id.vat or ''
     
-    @api.depends('amount', 'allocation_line_ids.allocate_amount')
+    @api.depends('amount', 'credit_line_ids.use_amount', 'allocation_line_ids.allocate_amount')
     def _compute_totals(self):
         for wizard in self:
+            wizard.total_credit_note = sum(
+                line.use_amount for line in wizard.credit_line_ids if line.selected
+            )
+            wizard.total_available = wizard.amount + wizard.total_credit_note
             wizard.total_allocated = sum(wizard.allocation_line_ids.mapped('allocate_amount'))
-            wizard.remaining_amount = wizard.amount - wizard.total_allocated
+            wizard.remaining_amount = wizard.total_available - wizard.total_allocated
     
     @api.onchange('journal_id')
     def onchange_journal_id(self):
@@ -76,8 +95,9 @@ class BuzClearingPaymentWizard(models.TransientModel):
     
     @api.onchange('paying_partner_id')
     def onchange_paying_partner_id(self):
-        """Clear allocation lines when paying partner changes"""
+        """Clear allocation and credit note lines when paying partner changes"""
         self.allocation_line_ids = [(5, 0, 0)]
+        self.credit_line_ids = [(5, 0, 0)]
     
     def action_next(self):
         """Move to next step"""
@@ -90,6 +110,21 @@ class BuzClearingPaymentWizard(models.TransientModel):
             if not self.amount or self.amount <= 0:
                 raise ValidationError(_('Payment amount must be greater than 0.'))
             
+            # Load available credit notes
+            self._load_available_credit_notes()
+            
+            self.state = 'credit_notes'
+            return {
+                'type': 'ir.actions.act_window',
+                'res_model': self._name,
+                'res_id': self.id,
+                'view_mode': 'form',
+                'view_id': self.env.ref('buz_inter_customer_clearing_payment.view_clearing_payment_wizard_credit_notes').id,
+                'target': 'new',
+                'context': self.env.context,
+            }
+        
+        elif self.state == 'credit_notes':
             # Load available invoices
             self._load_available_invoices()
             
@@ -124,8 +159,10 @@ class BuzClearingPaymentWizard(models.TransientModel):
     
     def action_previous(self):
         """Move to previous step"""
-        if self.state == 'allocate':
+        if self.state == 'credit_notes':
             self.state = 'header'
+        elif self.state == 'allocate':
+            self.state = 'credit_notes'
         elif self.state == 'review':
             self.state = 'allocate'
         
@@ -159,7 +196,8 @@ class BuzClearingPaymentWizard(models.TransientModel):
             ('payment_state', 'in', ['not_paid', 'partial']),
         ], order='invoice_date asc')
         
-        remaining = self.amount
+        # Use total available (payment + credit notes)
+        remaining = self.total_available
         allocation_lines = []
         
         for invoice in invoices:
@@ -204,8 +242,8 @@ class BuzClearingPaymentWizard(models.TransientModel):
     def action_confirm_and_post(self):
         """Create payment and clearing entries"""
         # Validate total allocation
-        if self.total_allocated > self.amount:
-            raise ValidationError(_('Total allocated amount cannot exceed payment amount.'))
+        if self.total_allocated > self.total_available:
+            raise ValidationError(_('Total allocated amount cannot exceed total available amount (Payment + Credit Notes).'))
         
         # Validate that we have allocations
         selected_lines = self.allocation_line_ids.filtered(lambda l: l.selected and l.allocate_amount > 0)
@@ -234,6 +272,26 @@ class BuzClearingPaymentWizard(models.TransientModel):
         _logger.info('='*80)
         _logger.info('Payment created: %s', payment.name)
         _logger.info('Selected lines count: %s', len(selected_lines))
+        
+        # Process Credit Notes first (if any)
+        selected_credit_lines = self.credit_line_ids.filtered(lambda l: l.selected and l.use_amount > 0)
+        _logger.info('Selected credit note lines count: %s', len(selected_credit_lines))
+        
+        for credit_line in selected_credit_lines:
+            _logger.info('---')
+            _logger.info('Processing Credit Note: %s', credit_line.credit_note_id.name)
+            _logger.info('Credit Note Partner: %s (ID: %s)', credit_line.credit_note_partner_id.name, credit_line.credit_note_partner_id.id)
+            _logger.info('Use amount: %s', credit_line.use_amount)
+            
+            # Check if credit note partner is same as paying partner
+            if credit_line.credit_note_partner_id == self.paying_partner_id:
+                _logger.info('-> Same partner - Direct reconciliation for credit note')
+                # Direct reconciliation - just reconcile credit note with payment
+                self._reconcile_credit_note_same_customer(payment, credit_line)
+            else:
+                _logger.info('-> Different partner - Create clearing entry for credit note')
+                # Create clearing entry for different customer
+                self._create_credit_note_clearing_entry(payment, credit_line)
         
         # Process allocations
         for line in selected_lines:
@@ -295,14 +353,51 @@ class BuzClearingPaymentWizard(models.TransientModel):
         
         self.allocation_line_ids = allocation_lines
     
+    def _load_available_credit_notes(self):
+        """Load all available credit notes filtered by same Tax ID as paying customer"""
+        if not self.paying_partner_id or not self.paying_partner_id.vat:
+            raise ValidationError(
+                _('Paying customer must have a Tax ID (VAT) to proceed with clearing payment.')
+            )
+        
+        # Get all customers with the same Tax ID
+        partner_with_same_tax = self.env['res.partner'].search([
+            ('vat', '=', self.paying_partner_id.vat),
+        ])
+        
+        # Load credit notes from customers with same Tax ID
+        credit_notes = self.env['account.move'].search([
+            ('partner_id', 'in', partner_with_same_tax.ids),
+            ('state', '=', 'posted'),
+            ('move_type', '=', 'out_refund'),
+            ('payment_state', 'in', ['not_paid', 'partial']),
+            ('amount_residual', '>', 0),
+            ('currency_id', '=', self.currency_id.id),
+        ], order='invoice_date asc')
+        
+        credit_lines = []
+        for credit_note in credit_notes:
+            residual = abs(credit_note.amount_residual)  # Use absolute value for credit notes
+            credit_lines.append((0, 0, {
+                'credit_note_id': credit_note.id,
+                'selected': True,  # Auto-select all available credit notes
+                'use_amount': residual,  # Auto-fill with full residual amount
+            }))
+        
+        self.credit_line_ids = credit_lines
+    
     def _reconcile_same_customer(self, payment, line):
         """Reconcile payment with invoice for same customer"""
-        # Find the receivable lines
+        # Find the UNRECONCILED receivable lines only
         payment_line = payment.move_id.line_ids.filtered(
             lambda l: l.account_id.account_type == 'asset_receivable'
+            and not l.reconciled
+            and l.amount_residual != 0
         )
         invoice_line = line.invoice_id.line_ids.filtered(
             lambda l: l.account_id.account_type == 'asset_receivable'
+            and not l.reconciled
+            and l.amount_residual != 0
         )
         
         if payment_line and invoice_line:
@@ -438,6 +533,8 @@ class BuzClearingPaymentWizard(models.TransientModel):
         # Clearing has credit AR (customer debt is cleared)
         invoice_line = invoice.line_ids.filtered(
             lambda l: l.account_id.account_type == 'asset_receivable'
+            and not l.reconciled
+            and l.amount_residual != 0
         )
         clearing_credit_line = clearing_move.line_ids.filtered(
             lambda l: l.partner_id == invoice_partner and l.credit > 0
@@ -472,6 +569,8 @@ class BuzClearingPaymentWizard(models.TransientModel):
         # Clearing has debit AR (paying customer takes on the debt)
         payment_line = payment.move_id.line_ids.filtered(
             lambda l: l.account_id.account_type == 'asset_receivable'
+            and not l.reconciled
+            and l.amount_residual != 0
         )
         clearing_debit_line = clearing_move.line_ids.filtered(
             lambda l: l.partner_id == self.paying_partner_id and l.debit > 0
@@ -507,5 +606,257 @@ class BuzClearingPaymentWizard(models.TransientModel):
             'clearing_move_id': clearing_move.id,
             'invoice_id': invoice.id,
             'amount': allocate_amount,
+            'date': self.payment_date,
+        })
+    
+    def _reconcile_credit_note_same_customer(self, payment, credit_line):
+        """Reconcile credit note with payment for same customer (no clearing entry needed)"""
+        import logging
+        _logger = logging.getLogger(__name__)
+        
+        credit_note = credit_line.credit_note_id
+        use_amount = credit_line.use_amount
+        
+        _logger.info('Reconciling credit note %s with payment (same customer)', credit_note.name)
+        
+        # Find UNRECONCILED receivable lines only
+        credit_note_line = credit_note.line_ids.filtered(
+            lambda l: l.account_id.account_type == 'asset_receivable' 
+            and l.partner_id == self.paying_partner_id
+            and not l.reconciled
+            and l.amount_residual != 0
+        )
+        payment_line = payment.move_id.line_ids.filtered(
+            lambda l: l.account_id.account_type == 'asset_receivable' 
+            and l.partner_id == self.paying_partner_id
+            and not l.reconciled
+            and l.amount_residual != 0
+        )
+        
+        _logger.info('Credit note line found: %s (reconciled: %s, residual: %s)', 
+                     credit_note_line.ids if credit_note_line else None,
+                     credit_note_line.reconciled if credit_note_line else None,
+                     credit_note_line.amount_residual if credit_note_line else None)
+        _logger.info('Payment line found: %s (reconciled: %s, residual: %s)', 
+                     payment_line.ids if payment_line else None,
+                     payment_line.reconciled if payment_line else None,
+                     payment_line.amount_residual if payment_line else None)
+        
+        if not credit_note_line:
+            raise UserError(
+                _('Credit Note %s has no unreconciled receivable lines available. '
+                  'It may have been fully reconciled already.') % credit_note.name
+            )
+        
+        if not payment_line:
+            raise UserError(
+                _('Payment has no unreconciled receivable lines available for partner %s. '
+                  'The payment amount may have been fully allocated already.') % self.paying_partner_id.name
+            )
+        
+        if credit_note_line and payment_line:
+            # Check residual amounts
+            total_credit_residual = abs(sum(credit_note_line.mapped('amount_residual')))
+            total_payment_residual = abs(sum(payment_line.mapped('amount_residual')))
+            
+            if total_credit_residual < use_amount:
+                raise UserError(
+                    _('Credit Note %s only has %.2f available (requested: %.2f)') 
+                    % (credit_note.name, total_credit_residual, use_amount)
+                )
+            
+            if total_payment_residual < use_amount:
+                raise UserError(
+                    _('Payment only has %.2f available for reconciliation (requested: %.2f)') 
+                    % (total_payment_residual, use_amount)
+                )
+            
+            # Reconcile credit note with payment
+            lines_to_reconcile = credit_note_line | payment_line
+            lines_to_reconcile.reconcile()
+            
+            # Mark as clearing reconcile
+            partial_reconciles = credit_note_line.matched_debit_ids | credit_note_line.matched_credit_ids
+            partial_reconciles |= payment_line.matched_debit_ids | payment_line.matched_credit_ids
+            partial_reconciles.filtered(lambda r: not r.is_clearing_reconcile).write({
+                'is_clearing_reconcile': True,
+                'clearing_payment_id': payment.id,
+            })
+            
+            # Create clearing link
+            self.env['buz.clearing.link'].create({
+                'payment_id': payment.id,
+                'invoice_id': credit_note.id,
+                'amount': use_amount,
+                'date': self.payment_date,
+            })
+        else:
+            _logger.warning('Could not find unreconciled receivable lines for credit note reconciliation. Credit Note may be fully reconciled or payment line not available.')
+    
+    def _create_credit_note_clearing_entry(self, payment, credit_line):
+        """Create clearing journal entry for credit note (different customer - transfer credit to paying customer)"""
+        credit_note = credit_line.credit_note_id
+        credit_note_partner = credit_line.credit_note_partner_id
+        use_amount = credit_line.use_amount
+        currency = credit_line.currency_id
+        
+        import logging
+        _logger = logging.getLogger(__name__)
+        _logger.info('='*80)
+        _logger.info('_create_credit_note_clearing_entry called')
+        _logger.info('Credit Note: %s', credit_note.name)
+        _logger.info('Credit Note Partner: %s (ID: %s)', credit_note_partner.name, credit_note_partner.id)
+        _logger.info('Paying Partner: %s (ID: %s)', self.paying_partner_id.name, self.paying_partner_id.id)
+        _logger.info('Use Amount: %s (type: %s)', use_amount, type(use_amount))
+        _logger.info('Currency: %s (ID: %s)', currency.name if currency else 'None', currency.id if currency else 'None')
+        
+        # Validate use amount
+        if not use_amount or use_amount <= 0:
+            raise UserError(_('Use amount must be greater than 0 for credit note %s') % credit_note.name)
+        
+        # Get accounts
+        receivable_account = credit_note.line_ids.filtered(
+            lambda l: l.account_id.account_type == 'asset_receivable'
+        ).account_id
+        
+        if not receivable_account:
+            raise UserError(_('Cannot find receivable account for credit note %s') % credit_note.name)
+        
+        # Determine if we're using foreign currency
+        company_currency = self.env.company.currency_id
+        is_foreign_currency = currency != company_currency
+        
+        # Calculate amounts in company currency
+        if is_foreign_currency:
+            amount_company_currency = currency._convert(
+                use_amount,
+                company_currency,
+                self.env.company,
+                self.payment_date or fields.Date.today()
+            )
+        else:
+            amount_company_currency = use_amount
+        
+        if not amount_company_currency or amount_company_currency <= 0:
+            raise UserError(_('Invalid amount calculation for credit note %s. Amount: %s') % (credit_note.name, amount_company_currency))
+        
+        _logger.info('Amount Company Currency: %s', amount_company_currency)
+        _logger.info('Is Foreign Currency: %s', is_foreign_currency)
+        
+        # Credit Note accounting logic:
+        # Credit Note has Cr AR (we owe customer, customer has credit)
+        # We need to:
+        # Dr AR : Credit Note Partner (clear the credit we owe them)
+        # Cr AR : Paying Partner (transfer the credit to paying partner)
+        
+        # Prepare line values based on currency
+        if is_foreign_currency:
+            debit_line_vals = {
+                'account_id': receivable_account.id,
+                'partner_id': credit_note_partner.id,  # Credit note customer's credit is cleared
+                'debit': amount_company_currency,
+                'credit': 0.0,
+                'amount_currency': use_amount,
+                'currency_id': currency.id,
+            }
+            credit_line_vals = {
+                'account_id': receivable_account.id,
+                'partner_id': self.paying_partner_id.id,  # Paying customer receives the credit
+                'debit': 0.0,
+                'credit': amount_company_currency,
+                'amount_currency': -use_amount,
+                'currency_id': currency.id,
+            }
+        else:
+            debit_line_vals = {
+                'account_id': receivable_account.id,
+                'partner_id': credit_note_partner.id,
+                'debit': amount_company_currency,
+                'credit': 0.0,
+            }
+            credit_line_vals = {
+                'account_id': receivable_account.id,
+                'partner_id': self.paying_partner_id.id,
+                'debit': 0.0,
+                'credit': amount_company_currency,
+            }
+        
+        # Create clearing journal entry
+        move_vals = {
+            'journal_id': self.journal_id.id,
+            'date': self.payment_date,
+            'ref': _('Credit Note Clearing: %s - %s') % (credit_note_partner.name, self.paying_partner_id.name),
+            'is_clearing_entry': True,
+            'clearing_payment_id': payment.id,
+            'line_ids': [
+                (0, 0, debit_line_vals),
+                (0, 0, credit_line_vals),
+            ],
+        }
+        
+        _logger.info('Move Vals: %s', move_vals)
+        _logger.info('Debit Line: %s', debit_line_vals)
+        _logger.info('Credit Line: %s', credit_line_vals)
+        
+        clearing_move = self.env['account.move'].create(move_vals)
+        clearing_move.action_post()
+        
+        # Reconcile credit note with clearing entry
+        # Credit Note has credit AR (we owe customer)
+        # Clearing has debit AR (clear the debt we owe)
+        # Only reconcile UNRECONCILED lines
+        credit_note_line = credit_note.line_ids.filtered(
+            lambda l: l.account_id.account_type == 'asset_receivable'
+            and l.partner_id == credit_note_partner
+            and not l.reconciled
+            and l.amount_residual != 0
+        )
+        clearing_debit_line = clearing_move.line_ids.filtered(
+            lambda l: l.partner_id == credit_note_partner 
+            and l.debit > 0
+            and not l.reconciled
+        )
+        
+        _logger.info('Credit Note line: %s (debit: %s, credit: %s, partner: %s, reconciled: %s, residual: %s)', 
+                     credit_note_line.ids if credit_note_line else None,
+                     sum(credit_note_line.mapped('debit')) if credit_note_line else 0,
+                     sum(credit_note_line.mapped('credit')) if credit_note_line else 0,
+                     credit_note_line.mapped('partner_id.name') if credit_note_line else None,
+                     credit_note_line.reconciled if credit_note_line else None,
+                     credit_note_line.amount_residual if credit_note_line else None)
+        _logger.info('Clearing debit line: %s (debit: %s, credit: %s, partner: %s, reconciled: %s)',
+                     clearing_debit_line.ids if clearing_debit_line else None,
+                     sum(clearing_debit_line.mapped('debit')) if clearing_debit_line else 0,
+                     sum(clearing_debit_line.mapped('credit')) if clearing_debit_line else 0,
+                     clearing_debit_line.mapped('partner_id.name') if clearing_debit_line else None,
+                     clearing_debit_line.reconciled if clearing_debit_line else None)
+        
+        if not credit_note_line:
+            raise UserError(
+                _('Credit Note %s has no unreconciled receivable lines available for partner %s. '
+                  'It may have been fully reconciled already.') % (credit_note.name, credit_note_partner.name)
+            )
+        
+        if credit_note_line and clearing_debit_line:
+            # Auto reconcile credit note with clearing entry
+            lines_to_reconcile = credit_note_line | clearing_debit_line
+            lines_to_reconcile.reconcile()
+            
+            # Mark as clearing reconcile
+            partial_reconciles = credit_note_line.matched_debit_ids | credit_note_line.matched_credit_ids
+            partial_reconciles |= clearing_debit_line.matched_debit_ids | clearing_debit_line.matched_credit_ids
+            partial_reconciles.filtered(lambda r: not r.is_clearing_reconcile).write({
+                'is_clearing_reconcile': True,
+                'clearing_payment_id': payment.id,
+            })
+        else:
+            _logger.warning('Could not reconcile credit note with clearing entry. Lines may be already reconciled or not found.')
+        
+        # Create clearing link for credit note
+        self.env['buz.clearing.link'].create({
+            'payment_id': payment.id,
+            'clearing_move_id': clearing_move.id,
+            'invoice_id': credit_note.id,
+            'amount': use_amount,
             'date': self.payment_date,
         })

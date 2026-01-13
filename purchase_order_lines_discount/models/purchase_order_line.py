@@ -34,7 +34,7 @@ class PurchaseOrderLine(models.Model):
                 line.update({"discount": discount})
             line._compute_amount()
 
-    def _convert_to_tax_base_line_dict(self):
+    def _convert_to_tax_base_line_dict(self, **kwargs):
         """ Convert the current record to a dictionary in order to use the generic taxes computation method
         defined on account.tax.
 
@@ -51,6 +51,7 @@ class PurchaseOrderLine(models.Model):
             discount=self.discount,
             quantity=self.product_qty,
             price_subtotal=self.price_subtotal,
+            **kwargs,
         )
 
     def _prepare_account_move_line(self, move=False):

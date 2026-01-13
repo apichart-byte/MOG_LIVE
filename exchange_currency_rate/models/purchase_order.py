@@ -56,10 +56,10 @@ class PurchaseOrderLine(models.Model):
     """Extend purchase order line to use manual exchange rate."""
     _inherit = 'purchase.order.line'
 
-    def _convert_to_tax_base_line_dict(self):
+    def _convert_to_tax_base_line_dict(self, **kwargs):
         """Override to apply manual exchange rate."""
         self.ensure_one()
-        res = super()._convert_to_tax_base_line_dict()
+        res = super()._convert_to_tax_base_line_dict(**kwargs)
         if self.order_id.is_exchange and self.order_id.rate and self.order_id.rate != 1.0:
             # Apply manual rate to price_unit: price * rate
             res['price_unit'] = res['price_unit'] * self.order_id.rate
