@@ -126,48 +126,11 @@ class MrpProduction(models.Model):
         
         return picking_type
 
-    def action_allocate_materials_quick(self):
-        """Open quick allocation wizard for this MO with pre-filtered materials."""
-        self.ensure_one()
-        
-        import logging
-        _logger = logging.getLogger(__name__)
-        _logger.info("=== Quick allocation for MO: %s", self.name)
-        _logger.info("=== has_available_to_allocate: %s", self.has_available_to_allocate)
-        _logger.info("=== Stock requests: %s", self.stock_request_ids.mapped('name'))
-        
-        # Check if there are materials available to allocate
-        if not self.has_available_to_allocate:
-            raise UserError(_("No materials available to allocate to this Manufacturing Order."))
-        
-        # Check if there are stock requests with materials
-        available_materials = []
-        for request in self.stock_request_ids:
-            if request.state in ['requested', 'done']:
-                for line in request.line_ids:
-                    if line.qty_available_to_allocate > 0:
-                        available_materials.append(f"{line.product_id.name}: {line.qty_available_to_allocate}")
-        
-        _logger.info("=== Available materials: %s", available_materials)
-        
-        if not available_materials:
-            raise UserError(_("No materials found to allocate. Please check that stock requests have been issued."))
-        
-        # Create wizard and populate it
-        wizard = self.env['mrp.production.allocate.wizard'].create({
-            'mo_id': self.id,
-        })
-        wizard._populate_wizard()
-        
-        # Open the wizard
-        return {
-            "name": _("Allocate Materials to %s") % self.name,
-            "type": "ir.actions.act_window",
-            "view_mode": "form",
-            "res_model": "mrp.production.allocate.wizard",
-            "res_id": wizard.id,
-            "target": "new",
-        }
+    # DISABLED: Allocation wizard removed - simplified workflow
+    # Materials automatically available at destination location after validate picking
+    # def action_allocate_materials_quick(self):
+    #     """Open quick allocation wizard for this MO with pre-filtered materials."""
+    #     pass
 
 
 class StockPicking(models.Model):
@@ -198,19 +161,19 @@ class StockPicking(models.Model):
         """Update request when picking is done."""
         res = super()._action_done()
         
-        # Update related stock requests
+        # Update related stock requests and auto-mark as done
         for picking in self:
             if picking.stock_request_id:
-                picking.stock_request_id._compute_issued_quantities()
+                request = picking.stock_request_id
+                request._compute_issued_quantities()
                 
-                # If all lines are fully issued, mark as done (configurable behavior)
-                config = self.env['ir.config_parameter'].sudo()
-                auto_done = config.get_param('mrp_stock_request.auto_done_on_issue', 'False')
-                if auto_done == 'True':
-                    request = picking.stock_request_id
-                    if all(float_is_zero(line.qty_remaining, precision_rounding=line.uom_id.rounding) 
-                           for line in request.line_ids):
-                        request.write({"state": "done"})
+                # Auto-mark as done after validate (simplified workflow)
+                if request.state == 'requested':
+                    request.write({"state": "done"})
+                    request.message_post(
+                        body=_("Stock Request marked as Done automatically after transfer validation. Materials are now available at %s.") % request.location_dest_id.complete_name,
+                        subtype_id=self.env.ref("mail.mt_note").id
+                    )
         
         return res
 
@@ -611,68 +574,12 @@ class MrpStockRequest(models.Model):
             for line in request.line_ids:
                 line._compute_qty_issued()
 
-    def action_allocate_wizard(self):
-        """Open allocation wizard - smart selection based on MO count."""
-        self.ensure_one()
-        
-        import logging
-        _logger = logging.getLogger(__name__)
-        _logger.info("=== action_allocate_wizard called for: %s", self.name)
-        _logger.info("=== Stock Request state: %s", self.state)
-        _logger.info("=== Stock Request MOs: %s (count: %d)", self.mo_ids.mapped('name'), len(self.mo_ids))
-
-        # DEBUG: Check if allocation should be allowed for this state
-        if self.state == 'done':
-            _logger.warning("=== ALLOCATION BLOCKED: Stock request %s is in 'done' state", self.name)
-            raise UserError(_("Cannot allocate materials from a stock request that is marked as 'done'."))
-        
-        if not self.picking_ids.filtered(lambda p: p.state == 'done'):
-            raise UserError(_("No materials have been issued yet. Please validate the picking first."))
-
-        # Check if there are any quantities available to allocate
-        has_available = any(
-            float_compare(
-                line.qty_available_to_allocate,
-                0.0,
-                precision_rounding=line.uom_id.rounding
-            ) > 0
-            for line in self.line_ids
-        )
-
-        if not has_available:
-            raise UserError(_("No quantities available to allocate."))
-
-        # Smart wizard selection based on number of MOs
-        mo_count = len(self.mo_ids)
-        _logger.info("=== MO count: %d, using %s wizard", mo_count, "multi" if mo_count > 1 else "single")
-        
-        if mo_count > 1:
-            # Multiple MOs: Create wizard first, then populate
-            wizard = self.env['mrp.stock.request.allocate.multi.wizard'].create({
-                'request_id': self.id,
-            })
-            
-            # Now open the wizard
-            return {
-                "name": _("Allocate Materials to Manufacturing Orders"),
-                "type": "ir.actions.act_window",
-                "view_mode": "form",
-                "res_model": "mrp.stock.request.allocate.multi.wizard",
-                "res_id": wizard.id,
-                "target": "new",
-            }
-        else:
-            # Single MO or no specific MO: Use original wizard
-            return {
-                "name": _("Allocate Materials to MO"),
-                "type": "ir.actions.act_window",
-                "view_mode": "form",
-                "res_model": "mrp.stock.request.allocate.wizard",
-                "target": "new",
-                "context": {
-                    "default_request_id": self.id,
-                },
-            }
+    # DISABLED: Allocation wizard removed - simplified workflow
+    # Materials automatically available at destination location after validate picking
+    # Users manage materials directly in MO using standard Odoo Check Availability
+    # def action_allocate_wizard(self):
+    #     """Open allocation wizard - smart selection based on MO count."""
+    #     pass
 
     def action_open_pickings(self):
         """Return action to open related pickings."""
