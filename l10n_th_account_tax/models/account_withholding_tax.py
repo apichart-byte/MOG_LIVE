@@ -1,6 +1,6 @@
 # Copyright 2020 Ecosoft Co., Ltd (https://ecosoft.co.th/)
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html)
-from odoo import _, api, fields, models
+from odoo import api, fields, models
 from odoo.exceptions import ValidationError
 
 from .withholding_tax_cert import INCOME_TAX_FORM, WHT_CERT_INCOME_TYPE
@@ -56,7 +56,7 @@ class AccountWithholdingTax(models.Model):
     def _check_is_pit(self):
         pits = self.search_count([("is_pit", "=", True)])
         if pits > 1:
-            raise ValidationError(_("Only 1 personal income tax allowed!"))
+            raise ValidationError(self.env._("Only 1 personal income tax allowed!"))
 
     # Removed constraint that required selected account to have wht_account=True
     # so users can choose existing chart of accounts freely. If you want to

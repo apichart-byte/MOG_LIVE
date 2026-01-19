@@ -124,8 +124,8 @@ class ThaiTaxReport(models.AbstractModel):
                     "partner_branch": partner_id.branch or "00000",
                 }
             )
-            total_base += line["tax_base_amount"]
-            total_tax += line["tax_amount"]
+            total_base += line["tax_base_amount"] or 0.0
+            total_tax += line["tax_amount"] or 0.0
         total_amount = total_base + total_tax
         return total_base, total_tax, total_amount, tax_report_data
 
