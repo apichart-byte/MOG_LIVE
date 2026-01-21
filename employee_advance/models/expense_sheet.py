@@ -48,10 +48,17 @@ class HrExpenseSheet(models.Model):
     
     is_billed = fields.Boolean(
         string='Bills Created',
-        default=False,
+        compute='_compute_is_billed',
+        store=True,
         readonly=True,
         help="Indicates if bills have been created for this expense sheet."
     )
+    
+    @api.depends('bill_ids')
+    def _compute_is_billed(self):
+        """Compute is_billed based on actual bill_ids"""
+        for sheet in self:
+            sheet.is_billed = bool(sheet.bill_ids)
 
     use_advance = fields.Boolean(
         string='Clear from Advance',
@@ -323,7 +330,8 @@ class HrExpenseSheet(models.Model):
         self._validate_fiscal_period()
         self._validate_expense_lines_for_clear_mode()
         
-        if self.is_billed:
+        # Check if bills already exist (more reliable check)
+        if self.bill_ids:
             raise UserError(_("Bills have already been created for this expense sheet."))
         
         # Always use the date-based grouping logic to separate bills by date
@@ -332,7 +340,7 @@ class HrExpenseSheet(models.Model):
         
         if bills:
             self.bill_ids = [(4, bill.id) for bill in bills]
-            self.is_billed = True
+            # is_billed will be auto-computed from bill_ids
             
             # Post accounting activity to reviewers
             self._post_accounting_activity_for_bills(bills)
