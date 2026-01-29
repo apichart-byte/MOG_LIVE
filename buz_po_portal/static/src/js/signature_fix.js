@@ -183,6 +183,42 @@ publicWidget.registry.POSignature = publicWidget.Widget.extend({
     },
 
     /**
+     * Resize canvas signature to reduce file size
+     * Returns a smaller data URI that won't cause wkhtmltopdf memory issues
+     */
+    _resizeCanvasSignature: function (sourceCanvas, maxWidth, maxHeight) {
+        // Create a temporary canvas for resizing
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+
+        // Calculate new dimensions maintaining aspect ratio
+        let width = sourceCanvas.width;
+        let height = sourceCanvas.height;
+
+        if (width > maxWidth) {
+            height = height * (maxWidth / width);
+            width = maxWidth;
+        }
+        if (height > maxHeight) {
+            width = width * (maxHeight / height);
+            height = maxHeight;
+        }
+
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+
+        // Fill with white background (important for PNG transparency)
+        tempCtx.fillStyle = '#FFFFFF';
+        tempCtx.fillRect(0, 0, width, height);
+
+        // Draw the resized signature
+        tempCtx.drawImage(sourceCanvas, 0, 0, width, height);
+
+        // Return as PNG (smaller than original due to resize)
+        return tempCanvas.toDataURL('image/png');
+    },
+
+    /**
      * Submit approval with signature
      */
     _onSubmitApproval: function (ev) {
@@ -197,7 +233,8 @@ publicWidget.registry.POSignature = publicWidget.Widget.extend({
                 alert('Please provide your signature before submitting.');
                 return;
             }
-            signatureData = this.canvas.toDataURL('image/png');
+            // Resize signature to reduce file size and prevent PDF memory issues
+            signatureData = this._resizeCanvasSignature(this.canvas, 300, 120);
             this._submitData(signatureData);
         } else {
             const fileInput = document.getElementById('signature_file');

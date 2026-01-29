@@ -1,5 +1,6 @@
 from odoo import http, fields, _
 from odoo.http import request
+from odoo.tools.image import image_process
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -213,6 +214,14 @@ class PurchaseApprovalController(http.Controller):
             # Remove data:image/png;base64, prefix if present
             if signature.startswith('data:image'):
                 signature = signature.split(',')[1]
+            
+            # Resize signature to prevent wkhtmltopdf memory issues (std::bad_alloc)
+            try:
+                signature = image_process(signature, size=(1024, 1024))
+            except Exception as e:
+                _logger.warning(f"Failed to resize signature for PO {po.name}: {e}")
+                # Continue with original signature if resize fails
+                pass
 
         # Update PO
         po.write({

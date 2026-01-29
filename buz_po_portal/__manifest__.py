@@ -1,6 +1,6 @@
 {
     'name': "buz_po_portal",
-    'version': '0.1',
+    'version': '0.4',
     'category': 'Uncategorized',
     'summary': 'Module for Purchase Order Portal',
     'description': """
