@@ -1,5 +1,6 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_employee_advance_box_user,employee.advance.box.user,model_employee_advance_box,base.group_user,1,0,0,0
+access_employee_advance_box_accountant,employee.advance.box.accountant,model_employee_advance_box,account.group_account_user,1,1,1,0
 access_employee_advance_box_manager,employee.advance.box.manager,model_employee_advance_box,base.group_erp_manager,1,1,1,1
 access_advance_box_refill_user,advance.box.refill.user,model_advance_box_refill,base.group_user,1,0,0,0
 access_advance_box_refill_accountant,advance.box.refill.accountant,model_advance_box_refill,account.group_account_user,1,1,1,0
