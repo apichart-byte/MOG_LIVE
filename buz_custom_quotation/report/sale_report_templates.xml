@@ -200,7 +200,7 @@
                     <span t-field="line.product_uom_qty" t-options='{"widget": "float", "precision": 0}'/> <span t-field="line.product_uom.name"/>
                 </td>
                 <td style="text-align: center; border: none; border-bottom: 1px solid #e3e3e3; padding: 10px 0;">
-                    <t t-if="line.normal_price and line.normal_price != 0">
+                    <t t-if="line.normal_price and line.normal_price != 0 and (line.discount_percent or 0) &gt; 0">
                         <span t-field="line.normal_price"
                               t-options='{"widget": "monetary", "display_currency": doc.currency_id}'/>
                     </t>
@@ -210,7 +210,7 @@
                     </t>
                 </td>
                 <td style="text-align: center; border: none; border-bottom: 1px solid #e3e3e3; padding: 10px 0;">
-                    <t t-if="line.normal_price and line.normal_price > 0">
+                    <t t-if="line.normal_price and line.normal_price > 0 and (line.discount_percent or 0) &gt; 0">
                         <t t-set="discount_percent" t-value="round((1 - (line.price_unit / line.normal_price)) * 100, 2)"/>
                         <span t-esc="discount_percent"/>%
                     </t>
@@ -219,8 +219,8 @@
                     </t>
                 </td>
                 <td style="text-align: center; border: none; border-bottom: 1px solid #e3e3e3; padding: 10px 0;">
-                    <t t-if="line.normal_price and line.normal_price != 0">
-                        <span t-esc="line.net_price"
+                    <t t-if="line.normal_price and line.normal_price != 0 and (line.discount_percent or 0) &gt; 0">
+                        <span t-field="line.price_unit"
                               t-options='{"widget": "monetary", "display_currency": doc.currency_id}'/>
                     </t>
                     <t t-else="">
