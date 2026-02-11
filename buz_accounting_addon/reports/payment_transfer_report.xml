@@ -96,13 +96,6 @@
                             </div>
                         </div>
                     </div>
-                    
-                    <div class="row mb-2">
-                        <div class="col-12 text-center">
-                            <!-- Placeholder field or number from image '112000' -->
-                            <span>112000</span>
-                        </div>
-                    </div>
 
                     <!-- Transfer Info Table -->
                     <table class="table table-bordered table-sm">
