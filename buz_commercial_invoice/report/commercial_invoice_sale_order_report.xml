@@ -13,7 +13,7 @@
                         }
                         .page {
                             font-family: 'Sarabun', Arial, sans-serif;
-                            font-size: 12px;
+                            font-size: 13px;
                             color: #000;
                         }
                         .table-sm th, .table-sm td {
@@ -50,7 +50,7 @@
                                         <img src="/buz_commercial_invoice/static/img/LOGO MOGEN.png" style="max-height: 80px; max-width: 100%;" alt="Logo"/>
                                     </div>
                                     <div class="col-9 text-left small">
-                                        <strong style="font-size: 12px;">MOGEN CO.,LTD.</strong>
+                                        <strong style="font-size: 10px;">MOGEN CO.,LTD.</strong>
                                         <div>9 Moo 12 Beungkhumproy, lumlukka, Pathumthani 12150 THAILAND</div>
                                         <div><strong>MOGEN Customer Service Tel.</strong> +66 2150 9709-13</div>
                                         <div><strong>Bangkok Service Center Tel.</strong> +66 2789 9980 Ext #801,802</div>
@@ -192,8 +192,8 @@
                                         <td>
                                             <span t-field="line.product_id.name_eng"/>
                                         </td>
-                                        <td class="text-wrap text-center">
-                                            <span t-field="line.name"/>
+                                        <td class="text-center">
+                                            <span t-field="line.hscode"/>
                                         </td>
                                         <td class="text-right">
                                             <span t-field="line.product_qty" t-options='{"widget": "float", "precision": 2}'/>
