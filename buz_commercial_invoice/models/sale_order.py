@@ -56,6 +56,10 @@ class SaleOrder(models.Model):
         string='Bank Information',
         tracking=True,
     )
+    ship_to = fields.Text(
+        string='Ship To',
+        tracking=True,
+    )
 
     amount_text = fields.Char(
         string='Amount in Words',
