@@ -65,6 +65,7 @@
                                     <div style="padding: 5px;">
                                         <div><strong>No.</strong> <span t-field="o.name"/></div>
                                         <div><strong>Date.</strong> <span t-field="o.date" t-options='{"widget": "date", "format": "dd/MM/yyyy"}'/></div>
+                                        <div t-if="o.payment_type == 'check'"><strong>Cheque No.</strong> <span t-field="o.check_number"/></div>
                                     </div>
                                 </div>
                             </div>
@@ -136,7 +137,7 @@
                                     <th style="width: 25%;">ชื่อ</th>
                                     <th style="width: 15%;">เลขที่เช็ค</th>
                                     <th style="width: 15%;">วันที่</th>
-                                    <th style="width: 20%;">สั่งจ่ายเช็คในนาม</th>
+                                    <th style="width: 20%;">สั่งจ่ายในนาม</th>
                                     <th style="width: 15%;">จำนวนเงิน</th>
                                 </tr>
                             </thead>

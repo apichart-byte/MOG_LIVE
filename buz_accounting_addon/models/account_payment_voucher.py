@@ -225,9 +225,9 @@ class AccountPaymentVoucher(models.Model):
              # Get WHT config directly from voucher line (already account.withholding.tax)
              first_wht_line = self.line_ids.filtered(lambda l: l.wht_amount > 0)[:1]
              
-             if first_wht_line and first_wht_line.wht_tax_id:
+             if first_wht_line and first_wht_line.buz_wht_tax_id:
                  # Use WHT config directly from voucher line
-                 wht_tax_config = first_wht_line.wht_tax_id
+                 wht_tax_config = first_wht_line.buz_wht_tax_id
                  ctx.update({
                      'default_wht_tax_id': wht_tax_config.id,
                      'default_wht_amount_base': sum(line.wht_base_amount for line in self.line_ids.filtered(lambda l: l.wht_amount > 0)),
@@ -655,7 +655,7 @@ class AccountPaymentVoucherLine(models.Model):
     )
     
     # WHT fields (Thailand-specific) - using l10n_th_account_tax module
-    wht_tax_id = fields.Many2one(
+    buz_wht_tax_id = fields.Many2one(
         'account.withholding.tax',  # Thai localization WHT
         string="WHT Tax",
         check_company=True
@@ -719,16 +719,16 @@ class AccountPaymentVoucherLine(models.Model):
 
     # Removed _onchange_amount_to_pay_gross to prevent overwriting correct base with gross (which might include VAT)
 
-    @api.onchange('wht_tax_id')
+    @api.onchange('buz_wht_tax_id')
     def _onchange_wht_tax(self):
         """Update WHT rate when tax is selected"""
-        if self.wht_tax_id:
+        if self.buz_wht_tax_id:
             # account.withholding.tax uses 'amount' as percentage (e.g., 3 for 3%)
-            self.wht_rate = self.wht_tax_id.amount / 100.0
+            self.wht_rate = self.buz_wht_tax_id.amount / 100.0
         else:
             self.wht_rate = 0.0
 
-    @api.depends('wht_base_amount', 'wht_rate', 'wht_tax_id')
+    @api.depends('wht_base_amount', 'wht_rate', 'buz_wht_tax_id')
     def _compute_wht_amount(self):
         for line in self:
             # Ensure WHT amount is always positive to guarantee deduction
