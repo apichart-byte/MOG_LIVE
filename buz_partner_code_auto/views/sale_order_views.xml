@@ -10,4 +10,28 @@
             </field>
         </field>
     </record>
+
+    <!-- Sale Order Tree View (Confirmed Orders) -->
+    <record id="view_order_tree_inherit_partner_code" model="ir.ui.view">
+        <field name="name">sale.order.tree.inherit.partner.code</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_tree"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="partner_code" optional="show"/>
+            </field>
+        </field>
+    </record>
+
+    <!-- Sale Quotation Tree View -->
+    <record id="view_quotation_tree_inherit_partner_code" model="ir.ui.view">
+        <field name="name">sale.quotation.tree.inherit.partner.code</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_quotation_tree"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="partner_code" optional="show"/>
+            </field>
+        </field>
+    </record>
 </odoo>
