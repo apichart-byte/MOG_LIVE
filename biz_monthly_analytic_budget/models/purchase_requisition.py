@@ -75,6 +75,30 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
         compute='_compute_monthly_budget_check',
     )
 
+    buz_budget_approval_id = fields.Many2one(
+        'buz.monthly.budget.approval.request',
+        string='Monthly Budget Approval Request',
+        compute='_compute_budget_approval_id',
+        store=False,
+    )
+    buz_budget_approval_state = fields.Selection(
+        related='buz_budget_approval_id.state',
+        string='Monthly Budget Approval Status',
+    )
+    budget_warning = fields.Boolean(
+        string='Budget Warning',
+        compute='_compute_monthly_budget_check'
+    )
+
+    def _compute_budget_approval_id(self):
+        ApprovalReq = self.env['buz.monthly.budget.approval.request'].sudo()
+        for rec in self:
+            req = ApprovalReq.search([
+                ('document_type', '=', 'pr'),
+                ('ref_pr_id', '=', rec.id),
+            ], limit=1, order='id desc')
+            rec.buz_budget_approval_id = req
+
     @api.depends('requisition_deadline', 'request_date', 'vendor_id', 'vendor_id.property_supplier_payment_term_id')
     def _compute_payment_date(self):
         for req in self:
@@ -83,9 +107,19 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
             payment_term = req.vendor_id.property_supplier_payment_term_id
             if payment_term:
                 p_date = req.request_date or fields.Date.today()
-                res = payment_term.compute(value=1, date_ref=p_date)
-                if res and res[0] and res[0][0]:
-                    req.payment_date = res[0][0]
+                res = payment_term._compute_terms(
+                    date_ref=p_date,
+                    currency=req.company_id.currency_id or self.env.company.currency_id,
+                    company=req.company_id or self.env.company,
+                    tax_amount=0,
+                    tax_amount_currency=0,
+                    sign=1,
+                    untaxed_amount=1,
+                    untaxed_amount_currency=1,
+                )
+                dates = [line.get('date') for line in res.get('line_ids', []) if line.get('date')]
+                if dates:
+                    req.payment_date = max(dates)
                     continue
             
             # 3. Requisition deadline + 30 days
@@ -106,6 +140,7 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
             target_date = req.payment_date
             if not target_date or not req.requisition_order_ids:
                 req.monthly_budget_check_result = ''
+                req.budget_warning = False
                 continue
 
             plan = _find_active_monthly_plan(self.env, target_date, req.company_id.id)
@@ -115,6 +150,7 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
                     'No active monthly analytic budget plan found for the expected payment date.'
                     '</div>'
                 )
+                req.budget_warning = False
                 continue
 
             # Aggregate amounts by analytic account across all lines
@@ -129,9 +165,11 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
                     'No analytic distribution found on PR lines.'
                     '</div>'
                 )
+                req.budget_warning = False
                 continue
 
             html_parts = []
+            has_warning = False
             AnalyticAccount = self.env['account.analytic.account']
             for account_id, pr_amt in analytic_totals.items():
                 analytic = AnalyticAccount.browse(account_id)
@@ -150,6 +188,8 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
                 total_after = budget_line.reserved_amount + budget_line.used_amount + pr_amt
                 remaining = budget_line.budget_amount - total_after
                 is_over = remaining < 0
+                if is_over:
+                    has_warning = True
                 status_class = 'danger' if is_over else 'success'
                 status_icon = '&#10060;' if is_over else '&#9989;'
                 html_parts.append(
@@ -173,12 +213,70 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
                     )
                 )
             req.monthly_budget_check_result = ''.join(html_parts)
+            req.budget_warning = has_warning
 
     def action_check_monthly_budget(self):
         """Button action to trigger monthly budget check recomputation."""
         self.ensure_one()
         self._compute_monthly_budget_check()
         return True
+
+    def action_request_monthly_budget_approval(self):
+        """Submit a monthly budget approval request when budget is exceeded."""
+        self.ensure_one()
+        target_date = self.payment_date
+        plan = _find_active_monthly_plan(self.env, target_date, self.company_id.id)
+        if not plan:
+            return
+
+        analytic_totals = {}
+        for line in self.requisition_order_ids:
+            for account_id, amount in _extract_analytic_amounts(line):
+                analytic_totals[account_id] = analytic_totals.get(account_id, 0.0) + amount
+
+        pr_amount = sum(analytic_totals.values())
+        
+        # We can't link to a single budget line if there are multiple.
+        # We find the total limits, used, etc across the affected analytics for this PR
+        limit_amt = 0.0
+        used = 0.0
+        reserved = 0.0
+        AnalyticAccount = self.env['account.analytic.account']
+        budget_line_names = []
+        
+        for account_id, amt in analytic_totals.items():
+            analytic = AnalyticAccount.browse(account_id)
+            if not analytic.exists():
+                continue
+            budget_line = plan.budget_line_ids.filtered(
+                lambda l, a=analytic: l.analytic_account_id == a
+            )
+            if budget_line:
+                bl = budget_line[0]
+                limit_amt += bl.budget_amount
+                used += bl.used_amount
+                reserved += bl.reserved_amount
+                budget_line_names.append(bl.analytic_account_id.name)
+                
+        overage = max(0.0, used + reserved + pr_amount - limit_amt)
+
+        return {
+            'name': _('Request Monthly Budget Approval'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'monthly.budget.request.reason.wizard',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {
+                'default_document_type': 'pr',
+                'default_ref_id': self.id,
+                'default_budget_line_names': ', '.join(budget_line_names),
+                'default_amount_requested': pr_amount,
+                'default_amount_used': used,
+                'default_amount_reserved': reserved,
+                'default_amount_limit': limit_amt,
+                'default_amount_overage': overage,
+            }
+        }
 
     # ── Budget enforcement ───────────────────────────────────────
 
@@ -207,6 +305,15 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
         target_date = self.payment_date
         if not target_date or not self.requisition_order_ids:
             return
+
+        # Check if an approved budget request exists
+        approved = self.env['buz.monthly.budget.approval.request'].sudo().search([
+            ('document_type', '=', 'pr'),
+            ('ref_pr_id', '=', self.id),
+            ('state', '=', 'approved'),
+        ], limit=1)
+        if approved:
+            return  # Bypass budget check – approved
 
         plan = _find_active_monthly_plan(self.env, target_date, self.company_id.id)
         if not plan:
@@ -279,6 +386,8 @@ class EmployeePurchaseRequisitionMonthly(models.Model):
                     '{:,.2f}'.format(v['pr_amt']),
                     '{:,.2f}'.format(v['overage']),
                 ))
+            
+            msg_lines.append(_('\nPlease click "Request Budget Approval" button to submit an approval request.'))
             raise UserError('\n'.join(msg_lines))
 
     def _reserve_monthly_analytic_budget(self):
