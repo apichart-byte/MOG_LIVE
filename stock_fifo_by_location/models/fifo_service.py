@@ -729,21 +729,3 @@ class FifoService(models.AbstractModel):
         }
 
 
-class ConfigParameter(models.Model):
-    """
-    Configuration parameters for stock_fifo_by_location module.
-    
-    Provides settings for:
-    - Shortage handling policy (error vs fallback)
-    - Location validation enable/disable
-    - Debug/logging options
-    """
-    
-    _name = 'config.parameter'
-    _inherit = 'ir.config_parameter'
-    
-    # These are just markers - actual params stored in ir.config_parameter
-    # Examples:
-    # stock_fifo_by_location.shortage_policy -> 'error' or 'fallback'
-    # stock_fifo_by_location.enable_validation -> 'True' or 'False'
-    # stock_fifo_by_location.debug_mode -> 'True' or 'False'

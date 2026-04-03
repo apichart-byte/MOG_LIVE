@@ -183,6 +183,83 @@ class StockMove(models.Model):
         _logger.info(f"🔨 Creating {len(svl_vals_list)} valuation layers")
         return self.env['stock.valuation.layer'].sudo().create(svl_vals_list)
     
+    def _create_in_svl(self, forced_quantity=None):
+        """
+        Override to use custom cost for inventory adjustment increases.
+        
+        When inventory is increased via adjustment, we use the cost rule
+        selected by the user instead of standard FIFO logic.
+        """
+        svl_vals_list = []
+        non_adjustment_moves = self.env['stock.move']
+        
+        # Check if this is an inventory adjustment with custom cost rules
+        cost_rules = self.env.context.get('inventory_cost_rules', {})
+        
+        for move in self:
+            # Check if this move is from inventory adjustment
+            is_inventory_adjustment = (
+                move.location_id.usage == 'inventory' and
+                move.location_dest_id.usage == 'internal'
+            )
+            
+            if is_inventory_adjustment and move.product_id.cost_method == 'fifo':
+                # Get warehouse for this adjustment
+                warehouse = move.location_dest_id.warehouse_id
+                
+                # Try to get cost from quant's cost rule
+                quant = self.env['stock.quant'].search([
+                    ('product_id', '=', move.product_id.id),
+                    ('location_id', '=', move.location_dest_id.id),
+                ], limit=1)
+                
+                if quant and (quant.inventory_cost_rule or quant.id in cost_rules):
+                    # Calculate cost based on rule
+                    unit_cost = quant._get_inventory_cost_for_increase(warehouse=warehouse)
+                    
+                    # Get standard SVL values
+                    move_vals = move._get_in_svl_vals(forced_quantity=forced_quantity)
+                    
+                    # Override unit_cost with calculated cost
+                    for vals in move_vals:
+                        vals['unit_cost'] = unit_cost
+                        vals['value'] = vals['quantity'] * unit_cost
+                        
+                        # Set warehouse_id
+                        if warehouse:
+                            vals['warehouse_id'] = warehouse.id
+                        
+                        _logger.info(
+                            f"Inventory adjustment IN: {move.product_id.name} "
+                            f"at {warehouse.name if warehouse else 'Unknown'}: "
+                            f"{vals['quantity']} units @ {unit_cost}/unit = {vals['value']}"
+                        )
+                    
+                    svl_vals_list.extend(move_vals)
+                    continue
+            
+            # Track moves that don't match for standard processing
+            non_adjustment_moves |= move
+        
+        # Process non-adjustment moves with standard logic
+        if non_adjustment_moves:
+            standard_svls = super(StockMove, non_adjustment_moves)._create_in_svl(
+                forced_quantity=forced_quantity
+            )
+            if svl_vals_list:
+                # Combine custom SVLs with standard ones
+                custom_svls = self.env['stock.valuation.layer'].sudo().create(svl_vals_list)
+                return custom_svls | standard_svls
+            return standard_svls
+        
+        # All moves were inventory adjustments with custom cost
+        if svl_vals_list:
+            return self.env['stock.valuation.layer'].sudo().create(svl_vals_list)
+        
+        # Fallback: no moves matched at all
+        return super()._create_in_svl(forced_quantity=forced_quantity)
+    
+
     def _action_done(self, cancel_backorder=False):
         """
         Override move completion to ensure warehouse context is passed to layer operations.

@@ -46,5 +46,61 @@
             </field>
         </record>
         
+        <!-- Inherit Search View: Add warehouse filters and group -->
+        <record id="view_inventory_valuation_search_inherit_location" model="ir.ui.view">
+            <field name="name">stock.valuation.layer.search.warehouse</field>
+            <field name="model">stock.valuation.layer</field>
+            <field name="inherit_id" ref="stock_account.view_inventory_valuation_search"/>
+            <field name="arch" type="xml">
+                <!-- Add filters before the Group By section -->
+                <xpath expr="//filter[@name='has_remaining_qty']" position="after">
+                    <separator/>
+                    <filter string="Stock Moves Only (Has Warehouse)"
+                            name="has_warehouse"
+                            domain="[('warehouse_id', '!=', False)]"
+                            help="Hide bill price difference adjustments that have no warehouse"/>
+                    <filter string="Bill Adjustments (No Warehouse)"
+                            name="no_warehouse"
+                            domain="[('warehouse_id', '=', False)]"
+                            help="Show only price difference adjustments from vendor bills"/>
+                </xpath>
+                <!-- Add Group By Warehouse in Group By section -->
+                <xpath expr="//filter[@name='group_by_product_id']" position="before">
+                    <filter string="Warehouse" name="group_by_warehouse_id"
+                            context="{'group_by': 'warehouse_id'}"/>
+                </xpath>
+            </field>
+        </record>
+
+        <!-- Override the main Stock Valuation action to auto-filter by warehouse -->
+        <record id="stock_account.stock_valuation_layer_action" model="ir.actions.act_window">
+            <field name="name">Stock Valuation</field>
+            <field name="res_model">stock.valuation.layer</field>
+            <field name="view_mode">tree,form,pivot</field>
+            <field name="domain">[('product_id.type', '=', 'product')]</field>
+            <field name="context">{
+                'search_default_group_by_product_id': True,
+                'search_default_has_warehouse': True
+            }</field>
+        </record>
+
+        <!-- Override the Stock Valuation by Location action -->
+        <record id="stock_valuation_layer_action_by_warehouse" model="ir.actions.act_window">
+            <field name="name">Stock Valuation by Location</field>
+            <field name="res_model">stock.valuation.layer</field>
+            <field name="view_mode">tree,form,pivot</field>
+            <field name="domain">[('product_id.type', '=', 'product'), ('warehouse_id', '!=', False)]</field>
+            <field name="context">{
+                'search_default_group_by_warehouse_id': True,
+                'search_default_has_warehouse': True
+            }</field>
+            <field name="help" type="html">
+                <p class="o_view_nocontent_smiling_face"/>
+                <p>
+                    Stock Valuation grouped by warehouse. Bill price difference adjustments are excluded.
+                </p>
+            </field>
+        </record>
+        
     </data>
 </odoo>

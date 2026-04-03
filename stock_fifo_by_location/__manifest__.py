@@ -16,6 +16,7 @@
         'data/edge_case_config.xml',
         'data/logging_config.xml',
         'data/concurrency_config.xml',
+        'views/stock_valuation_layer_views.xml',
         'views/stock_quant_views.xml',
         'wizard/stock_valuation_recalculate_wizard_views.xml',
         'wizard/stock_shortage_resolution_wizard_views.xml',

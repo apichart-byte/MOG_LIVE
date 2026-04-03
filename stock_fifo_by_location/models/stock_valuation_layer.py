@@ -130,6 +130,48 @@ class StockValuationLayer(models.Model):
                                 f"({move.location_dest_id.warehouse_id.name}) from dest location (fallback)"
                             )
         
+        # Priority 2.5: Fallback for inventory adjustment locations (usage='inventory')
+        # When _apply_inventory() creates moves, one side may be a Virtual Location
+        # (usage='inventory') which doesn't have a warehouse_id.
+        # We need to derive warehouse from the OTHER side (internal location).
+        if not vals.get('warehouse_id') and vals.get('stock_move_id'):
+            move = self.env['stock.move'].browse(vals['stock_move_id'])
+            if move:
+                source_usage = move.location_id.usage if move.location_id else None
+                dest_usage = move.location_dest_id.usage if move.location_dest_id else None
+                
+                # Internal → Inventory (stock decrease via adjustment)
+                if source_usage == 'internal' and dest_usage == 'inventory':
+                    if move.location_id.warehouse_id:
+                        vals['warehouse_id'] = move.location_id.warehouse_id.id
+                        _create_logger.info(
+                            f"📍 Inventory adj (decrease): set warehouse_id={vals['warehouse_id']} "
+                            f"({move.location_id.warehouse_id.name}) from source internal location"
+                        )
+                # Inventory → Internal (stock increase via adjustment)
+                elif source_usage == 'inventory' and dest_usage == 'internal':
+                    if move.location_dest_id.warehouse_id:
+                        vals['warehouse_id'] = move.location_dest_id.warehouse_id.id
+                        _create_logger.info(
+                            f"📍 Inventory adj (increase): set warehouse_id={vals['warehouse_id']} "
+                            f"({move.location_dest_id.warehouse_id.name}) from dest internal location"
+                        )
+                # Production → Internal or Internal → Production
+                elif source_usage == 'production' and dest_usage == 'internal':
+                    if move.location_dest_id.warehouse_id:
+                        vals['warehouse_id'] = move.location_dest_id.warehouse_id.id
+                        _create_logger.info(
+                            f"📍 Production (incoming): set warehouse_id={vals['warehouse_id']} "
+                            f"({move.location_dest_id.warehouse_id.name}) from dest internal location"
+                        )
+                elif source_usage == 'internal' and dest_usage == 'production':
+                    if move.location_id.warehouse_id:
+                        vals['warehouse_id'] = move.location_id.warehouse_id.id
+                        _create_logger.info(
+                            f"📍 Production (consumption): set warehouse_id={vals['warehouse_id']} "
+                            f"({move.location_id.warehouse_id.name}) from source internal location"
+                        )
+
         # Priority 3: Try to get from move_line through stock_move
         if not vals.get('warehouse_id') and vals.get('stock_move_id'):
             move = self.env['stock.move'].browse(vals['stock_move_id'])
@@ -239,7 +281,7 @@ class StockValuationLayer(models.Model):
             company_id = self.env.company.id
         
         layers = self._get_fifo_queue(product_id, warehouse_id, company_id)
-        return sum(layer.quantity for layer in layers)
+        return sum(layer.remaining_qty for layer in layers)
     
     @api.depends('landed_cost_ids.landed_cost_value')
     def _compute_total_landed_cost(self):
@@ -266,7 +308,10 @@ class StockValuationLayer(models.Model):
         from odoo.exceptions import ValidationError
         import logging
         _logger = logging.getLogger(__name__)
-        
+
+        if self.env.context.get('skip_warehouse_consistency_check'):
+            return
+
         for layer in self:
             # Skip validation for layers with zero quantity (fully consumed)
             if float_compare(abs(layer.quantity), 0, precision_digits=2) == 0:
@@ -453,7 +498,7 @@ class StockValuationLayer(models.Model):
         # since we override product._get_fifo_candidates() instead
         # But keep for manual calls to _run_fifo() (e.g., inter-warehouse transfers)
         
-        _logger.error(f"🔧 _run_fifo() Layer {self.id}: Product={self.product_id.display_name}, Qty={quantity}")
+        _logger.debug(f"🔧 _run_fifo() Layer {self.id}: Product={self.product_id.display_name}, Qty={quantity}")
         
         # Flush and invalidate to ensure warehouse_id is current
         self.flush_recordset(['warehouse_id', 'product_id', 'company_id'])
@@ -484,14 +529,14 @@ class StockValuationLayer(models.Model):
             ('company_id', '=', company.id),
         ]
         
-        _logger.error(f"🔧 Step 4: Searching candidates with domain: {candidates_domain}")
+        _logger.debug(f"🔧 Step 4: Searching candidates with domain: {candidates_domain}")
         
         candidates = self.search(candidates_domain, order='create_date, id')
         
         # Get warehouse name for logging
         warehouse_name = self.warehouse_id.name if self.warehouse_id else 'Unknown'
         
-        _logger.error(
+        _logger.debug(
             f"🔍 _run_fifo() QUERY RESULT - Layer {self.id}: "
             f"Product={self.product_id.display_name}, "
             f"Warehouse={warehouse_name} (ID={layer_warehouse_id}), "
@@ -500,9 +545,9 @@ class StockValuationLayer(models.Model):
         )
         
         if candidates:
-            _logger.error(f"🔍 Candidate layers found:")
+            _logger.debug(f"🔍 Candidate layers found:")
             for c in candidates[:5]:  # Show first 5
-                _logger.error(f"  - Layer {c.id}: warehouse={c.warehouse_id.name if c.warehouse_id else 'None'} (ID={c.warehouse_id.id if c.warehouse_id else 'None'}), remaining={c.remaining_qty}")
+                _logger.debug(f"  - Layer {c.id}: warehouse={c.warehouse_id.name if c.warehouse_id else 'None'} (ID={c.warehouse_id.id if c.warehouse_id else 'None'}), remaining={c.remaining_qty}")
         
         qty_to_take_on_candidates = abs(quantity)
         tmp_value = 0  # Accumulator for total value consumed
@@ -527,7 +572,7 @@ class StockValuationLayer(models.Model):
                 new_remaining_qty = 0
                 new_remaining_value = 0
             
-            _logger.error(
+            _logger.debug(
                 f"  📥 CONSUMING from Layer {candidate.id} at warehouse {candidate.warehouse_id.name if candidate.warehouse_id else 'None'} (ID={candidate.warehouse_id.id if candidate.warehouse_id else 'None'}): "
                 f"qty_taken={qty_taken_on_candidate:.2f} @ {candidate_unit_cost:.4f}/unit = {value_taken_on_candidate:.4f}, "
                 f"remaining: {candidate.remaining_qty:.2f} → {new_remaining_qty:.2f}"
