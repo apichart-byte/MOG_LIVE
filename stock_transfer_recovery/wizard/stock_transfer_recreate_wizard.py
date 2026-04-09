@@ -24,7 +24,7 @@ class StockTransferRecreateWizard(models.TransientModel):
             order = self.env['purchase.order'].browse(self.order_id)
             if order.exists():
                 order._recreate_receipt_action()
-                order.invalidate_recordset(['picking_ids', 'receipt_count'])
+                order.invalidate_recordset(['picking_ids', 'incoming_picking_count'])
                 order.message_post(body=_("Receipt transfer recreated by %s due to missing or inconsistent picking.", self.env.user.name))
 
         # Reload the current form view so smart button counts update immediately
