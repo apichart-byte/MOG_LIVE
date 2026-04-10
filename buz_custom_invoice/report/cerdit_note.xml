@@ -157,7 +157,7 @@
                                 </div>
                             </div>
                             <div class="col-4 text-end">
-                                <img t-if="doc.company_id.logo" t-att-src="image_data_uri(doc.company_id.logo)" 
+                                <img src="/buz_custom_invoice/static/logo/LOGO%20MOGEN.png" 
                                      style="width: 180px; height: auto; object-fit: contain;" alt="Company Logo"/>
                             </div>
                         </div>
