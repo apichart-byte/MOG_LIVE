@@ -52,9 +52,9 @@ class StockQuant(models.Model):
         
         # Determine warehouse from location
         warehouse = None
-        if location_dest_id.usage == 'internal':
+        if location_dest_id.usage in ('internal', 'transit'):
             warehouse = location_dest_id.warehouse_id
-        elif location_id.usage == 'internal':
+        elif location_id.usage in ('internal', 'transit'):
             warehouse = location_id.warehouse_id
         
         if warehouse:

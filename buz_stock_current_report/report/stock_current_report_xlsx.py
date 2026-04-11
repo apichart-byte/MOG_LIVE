@@ -72,7 +72,7 @@ class StockCurrentReportXlsx(models.AbstractModel):
             has_cost_access = self.env.user.has_group('buz_stock_current_report.group_stock_cost_viewer')
             
             # Write table headers based on user permissions
-            headers = ['Location', 'Product', 'Category', 'Qty On Hand', 'Free to Use', 'Incoming', 'Outgoing']
+            headers = ['Location', 'Internal Reference', 'Product', 'Category', 'Qty On Hand', 'Free to Use', 'Incoming', 'Outgoing']
             if has_cost_access:
                 headers.extend(['Unit Cost', 'Total Value'])
             headers.append('UoM')
@@ -101,6 +101,7 @@ class StockCurrentReportXlsx(models.AbstractModel):
                 
                 col_index = 0
                 sheet.write(row, col_index, location.display_name); col_index += 1
+                sheet.write(row, col_index, product.default_code or ''); col_index += 1
                 sheet.write(row, col_index, product.display_name); col_index += 1
                 sheet.write(row, col_index, category.display_name if category else ''); col_index += 1
                 sheet.write(row, col_index, rec['quantity'], number_format); col_index += 1
@@ -119,18 +120,19 @@ class StockCurrentReportXlsx(models.AbstractModel):
             # Write summary row (only if user has cost access)
             if has_cost_access:
                 row += 1
-                cost_col_index = 7  # Unit Cost and Total Value columns start at index 7
+                cost_col_index = 8  # Unit Cost and Total Value columns start at index 8
                 sheet.write(row, cost_col_index + 1, 'Total Value:', bold)
                 sheet.write(row, cost_col_index + 2, total_value, number_format)
             
             # Set column widths
             sheet.set_column('A:A', 25)
-            sheet.set_column('B:B', 30)
-            sheet.set_column('C:C', 20)
-            sheet.set_column('D:H', 15)
+            sheet.set_column('B:B', 20)
+            sheet.set_column('C:C', 30)
+            sheet.set_column('D:D', 20)
+            sheet.set_column('E:I', 15)
             if has_cost_access:
-                sheet.set_column('I:I', 15)
-                sheet.set_column('J:J', 12)
+                sheet.set_column('I:J', 15)
+                sheet.set_column('K:K', 12)
             else:
                 sheet.set_column('I:I', 12)
             

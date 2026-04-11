@@ -53,10 +53,10 @@ class FifoResetWizard(models.TransientModel):
                 ])
             rec.warehouse_count = len(warehouses)
 
-            # Get internal locations for selected warehouses
+            # Get internal + transit + production locations for selected warehouses
             locations = self.env['stock.location'].search([
                 ('warehouse_id', 'in', warehouses.ids),
-                ('usage', '=', 'internal'),
+                ('usage', 'in', ['internal', 'transit', 'production']),
                 ('company_id', '=', rec.company_id.id),
             ])
 

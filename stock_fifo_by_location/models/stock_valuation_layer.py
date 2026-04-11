@@ -156,6 +156,22 @@ class StockValuationLayer(models.Model):
                             f"📍 Inventory adj (increase): set warehouse_id={vals['warehouse_id']} "
                             f"({move.location_dest_id.warehouse_id.name}) from dest internal location"
                         )
+                # 🔴 FIX: Transit → Inventory (stock decrease at transit via adjustment)
+                elif source_usage == 'transit' and dest_usage == 'inventory':
+                    if move.location_id.warehouse_id:
+                        vals['warehouse_id'] = move.location_id.warehouse_id.id
+                        _create_logger.info(
+                            f"📍 Inventory adj transit (decrease): set warehouse_id={vals['warehouse_id']} "
+                            f"({move.location_id.warehouse_id.name}) from source transit location"
+                        )
+                # 🔴 FIX: Inventory → Transit (stock increase at transit via adjustment)
+                elif source_usage == 'inventory' and dest_usage == 'transit':
+                    if move.location_dest_id.warehouse_id:
+                        vals['warehouse_id'] = move.location_dest_id.warehouse_id.id
+                        _create_logger.info(
+                            f"📍 Inventory adj transit (increase): set warehouse_id={vals['warehouse_id']} "
+                            f"({move.location_dest_id.warehouse_id.name}) from dest transit location"
+                        )
                 # Production → Internal or Internal → Production
                 elif source_usage == 'production' and dest_usage == 'internal':
                     if move.location_dest_id.warehouse_id:

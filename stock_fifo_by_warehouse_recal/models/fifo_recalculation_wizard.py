@@ -2,7 +2,7 @@
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 import io
 import base64
@@ -11,6 +11,10 @@ try:
     import xlsxwriter
 except ImportError:
     xlsxwriter = None
+import logging
+import traceback
+
+_logger = logging.getLogger(__name__)
 
 
 class FifoRecalculationWizard(models.TransientModel):
@@ -472,7 +476,7 @@ class FifoRecalculationWizard(models.TransientModel):
         Does not write to database.
         """
         # In-memory FIFO queue: list of dicts {'qty': x, 'unit_cost': y, 'value': z}
-        fifo_queue = []
+        fifo_queue = deque()
         
         for move in moves:
             # Classify move and get cost
@@ -499,7 +503,7 @@ class FifoRecalculationWizard(models.TransientModel):
                         # Consume entire layer
                         qty_to_consume -= layer['qty']
                         log.append(f"      Consumed layer: {layer['qty']} units @ {layer['unit_cost']}")
-                        fifo_queue.pop(0)
+                        fifo_queue.popleft()
                     else:
                         # Partial consumption
                         layer['qty'] -= qty_to_consume
@@ -823,7 +827,7 @@ class FifoRecalculationWizard(models.TransientModel):
                     usage_records.unlink()
                 
                 # Now safe to delete the layers
-                old_layers.unlink()
+                old_layers.sudo().unlink()
                 deleted_count += len(old_layers)
         
         return deleted_count
@@ -844,7 +848,8 @@ class FifoRecalculationWizard(models.TransientModel):
             log.append(f"  Recreating layers for {product.display_name} @ {warehouse.name if warehouse else 'N/A'}")
             
             # FIFO queue for actual layer creation
-            fifo_queue = []
+            fifo_queue = deque()
+            group_created_count = 0
             
             for move in moves:
                 move_type, qty, unit_cost, value = self._classify_move_and_get_cost(move, warehouse_id)
@@ -868,7 +873,7 @@ class FifoRecalculationWizard(models.TransientModel):
                         layer_vals['locked'] = True
                     
                     new_layer = SVL.create(layer_vals)
-                    created_count += 1
+                    group_created_count += 1
                     
                     # Add to memory queue for FIFO tracking
                     fifo_queue.append({
@@ -898,7 +903,7 @@ class FifoRecalculationWizard(models.TransientModel):
                             total_cost += consumed_value
                             
                             consumed_layers.append((layer['layer_id'], consumed_qty, consumed_value, 0, 0))
-                            fifo_queue.pop(0)
+                            fifo_queue.popleft()
                         else:
                             # Partial consumption
                             consumed_qty = qty_to_consume
@@ -948,9 +953,10 @@ class FifoRecalculationWizard(models.TransientModel):
                         layer_vals['locked'] = True
                     
                     SVL.create(layer_vals)
-                    created_count += 1
+                    group_created_count += 1
             
-            log.append(f"    Created {created_count} layers")
+            created_count += group_created_count
+            log.append(f"    Created {group_created_count} layers")
         
         return created_count
 
@@ -1057,8 +1063,6 @@ class FifoRecalculationWizard(models.TransientModel):
         layers_to_backup = all_layers_to_backup
         
         # Log what we're backing up
-        import logging
-        _logger = logging.getLogger(__name__)
         _logger.info(f"Backup: Found {len(affected_combinations)} product-warehouse combinations")
         _logger.info(f"Backup: Total layers to backup: {len(layers_to_backup)}")
         
@@ -1118,7 +1122,6 @@ class FifoRecalculationWizard(models.TransientModel):
             except Exception as e:
                 # Log error but continue with other layers
                 _logger.error(f"Failed to prepare backup for layer {layer.id} (Product: {layer.product_id.display_name}): {str(e)}")
-                import traceback
                 _logger.error(traceback.format_exc())
                 failed_layers.append({
                     'layer_id': layer.id,
@@ -1136,7 +1139,6 @@ class FifoRecalculationWizard(models.TransientModel):
                 _logger.info(f"Successfully created {backup_line_count} backup lines")
         except Exception as e:
             _logger.error(f"CRITICAL: Failed to create backup lines in batch: {str(e)}")
-            import traceback
             _logger.error(traceback.format_exc())
             
             # Fallback: Try creating one by one
@@ -1157,20 +1159,8 @@ class FifoRecalculationWizard(models.TransientModel):
         if backup_line_count != backup.layer_count:
             backup.write({'layer_count': backup_line_count})
         
-        # CRITICAL: Commit backup and lines to database immediately
-        # This ensures backup is persisted even if wizard transaction is rolled back
-        try:
-            self.env.cr.commit()
-            _logger.info(f"Backup committed to database: {backup.name} with {backup_line_count} lines")
-        except Exception as e:
-            _logger.error(f"Failed to commit backup: {str(e)}")
-            import traceback
-            _logger.error(traceback.format_exc())
-        
         # Log failed layers if any
         if failed_layers:
-            import logging
-            _logger = logging.getLogger(__name__)
             _logger.warning(f"Failed to backup {len(failed_layers)} layers out of {len(layers_to_backup)}")
             for failed in failed_layers[:10]:  # Log first 10 failures
                 _logger.warning(f"  Layer {failed['layer_id']} ({failed['product']}): {failed['error']}")

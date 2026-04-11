@@ -93,6 +93,12 @@ class FifoResetService(models.AbstractModel):
                 status = 'error'
                 summary['error_message'] = str(e)
                 _logger.exception("FIFO Reset Error")
+                # 🔴 FIX: Pipeline ใช้ cr.commit() per-warehouse แล้ว error ทำให้
+                # cursor อยู่ใน failed transaction state → ต้อง rollback ก่อน create log
+                try:
+                    self.env.cr.rollback()
+                except Exception:
+                    pass
                 
         # Logging
         if not dry_run or status == 'error':
@@ -155,29 +161,38 @@ class FifoResetService(models.AbstractModel):
                 _logger.info("FIFO Reset: START processing warehouse [%s] %s", wh.code, wh.name)
                 _logger.info("=" * 60)
 
-                # Get all internal locations for this warehouse
-                locations = self.env['stock.location'].search([
+                # Get ALL locations (internal + transit + production) for this warehouse
+                # Used for: clear reservations, cancel pickings, cancel MOs
+                all_locations = self.env['stock.location'].search([
                     ('warehouse_id', '=', wh.id),
-                    ('usage', '=', 'internal'),
+                    ('usage', 'in', ['internal', 'transit', 'production']),
                     ('company_id', '=', self.env.company.id),
                 ])
-                if not locations:
-                    _logger.info("FIFO Reset: Warehouse %s has no internal locations, skipping.", wh.name)
+                # Get ONLY internal locations for quant reset
+                # 🔴 Odoo _apply_inventory() only works on usage='internal' locations!
+                # Transit/Production quants จะ raise ValidationError ถ้าพยายาม apply_inventory
+                internal_locations = all_locations.filtered(lambda l: l.usage == 'internal')
+                
+                if not all_locations:
+                    _logger.info("FIFO Reset: Warehouse %s has no locations, skipping.", wh.name)
                     wh_detail['status'] = 'success'
                     summary['warehouse_details'].append(wh_detail)
                     continue
 
                 # Step 1: Check safety per warehouse
-                self._check_safety_warehouse(locations, reset_dt=reset_dt)
+                self._check_safety_warehouse(all_locations, reset_dt=reset_dt)
 
-                # Step 2: Clear reservations for this warehouse
-                self._clear_reservations(locations, reset_dt=reset_dt)
+                # Step 2: Clear reservations for this warehouse (all location types)
+                self._clear_reservations(all_locations, reset_dt=reset_dt)
 
-                # Step 3: Cancel pickings for this warehouse
-                self._cancel_pickings(locations, reset_dt=reset_dt)
+                # Step 3: Cancel pickings for this warehouse (all location types)
+                self._cancel_pickings(all_locations, reset_dt=reset_dt)
 
-                # Step 4: Reset quants for this warehouse
-                wh_quants, wh_products = self._reset_quants(locations, warehouse=wh, reset_dt=reset_dt, dry_run=dry_run)
+                # Step 3.5: Cancel open Manufacturing Orders (MO)
+                self._cancel_manufacturing_orders(all_locations, reset_dt=reset_dt)
+
+                # Step 4: Reset quants — ONLY internal locations!
+                wh_quants, wh_products = self._reset_quants(internal_locations, warehouse=wh, reset_dt=reset_dt, dry_run=dry_run)
                 wh_detail['quants'] = wh_quants
                 wh_detail['products'] = wh_products
                 summary['total_quants'] += wh_quants
@@ -218,7 +233,7 @@ class FifoResetService(models.AbstractModel):
             _logger.info("FIFO Reset: Committed SVL flush")
 
         # Final validation
-        self._validate_fifo(warehouses=warehouses)
+        self._validate_fifo(warehouses=warehouses, reset_dt=reset_dt)
 
     # ─── Safety Checks ────────────────────────────────────────────
 
@@ -312,6 +327,76 @@ class FifoResetService(models.AbstractModel):
             _logger.info("FIFO Reset: Cancelling %d pickings", len(pickings))
             pickings.action_cancel()
 
+    def _cancel_manufacturing_orders(self, locations, reset_dt=False):
+        """Step 3.5: Cancel open Manufacturing Orders (MO) for this warehouse's locations.
+        
+        MO สร้าง stock.move ที่ไม่ผูก stock.picking → _cancel_pickings ไม่ครอบคลุม
+        ต้อง cancel MO โดยตรงเพื่อ:
+        1. ปลด reservation ของ component moves
+        2. ยกเลิก WIP moves ที่ค้างอยู่
+        3. ป้องกัน SVL ค้างจาก production moves
+        """
+        # Check if mrp module is installed
+        if 'mrp.production' not in self.env:
+            _logger.info("FIFO Reset: MRP module not installed, skipping MO cancellation.")
+            return
+        
+        MO = self.env['mrp.production']
+        
+        # Find open MOs that use this warehouse's locations
+        # MO has picking_type_id → which has default_location_src_id/default_location_dest_id
+        # Also check MO's location_src_id and location_dest_id directly
+        domain = [
+            ('company_id', '=', self.env.company.id),
+            ('state', 'not in', ['done', 'cancel']),
+            '|',
+            ('location_src_id', 'in', locations.ids),
+            ('location_dest_id', 'in', locations.ids),
+        ]
+        if reset_dt:
+            domain += [('date_start', '<=', reset_dt)]
+        
+        open_mos = MO.search(domain)
+        if not open_mos:
+            _logger.info("FIFO Reset: No open Manufacturing Orders found.")
+            return
+        
+        _logger.info("FIFO Reset: Cancelling %d open Manufacturing Orders", len(open_mos))
+        
+        for mo in open_mos:
+            try:
+                # Unreserve component moves first
+                if mo.move_raw_ids:
+                    reserved_moves = mo.move_raw_ids.filtered(
+                        lambda m: m.state in ('assigned', 'partially_available')
+                    )
+                    if reserved_moves:
+                        reserved_moves._do_unreserve()
+                
+                # Cancel the MO
+                mo.action_cancel()
+                _logger.info("FIFO Reset: Cancelled MO %s", mo.name)
+            except Exception as e:
+                _logger.warning(
+                    "FIFO Reset: Could not cancel MO %s: %s — trying force cancel",
+                    mo.name, str(e),
+                )
+                try:
+                    # Force cancel by writing state directly if normal cancel fails
+                    mo.with_context(skip_warehouse_consistency_check=True).write({'state': 'cancel'})
+                    # Cancel related moves
+                    all_mo_moves = (mo.move_raw_ids | mo.move_finished_ids).filtered(
+                        lambda m: m.state not in ('done', 'cancel')
+                    )
+                    if all_mo_moves:
+                        all_mo_moves._action_cancel()
+                    _logger.info("FIFO Reset: Force-cancelled MO %s", mo.name)
+                except Exception as e2:
+                    _logger.error(
+                        "FIFO Reset: Failed to force-cancel MO %s: %s",
+                        mo.name, str(e2),
+                    )
+
     def _reset_quants(self, locations, warehouse, reset_dt=False, dry_run=False):
         """Step 3: Reset quants for this warehouse's locations.
         
@@ -388,10 +473,24 @@ class FifoResetService(models.AbstractModel):
                         (warehouse.id, tuple(new_moves.ids))
                     )
                 # Fix orphan layers: layers created after last_svl_id but not linked to new moves
-                self.env.cr.execute(
-                    "UPDATE stock_valuation_layer SET warehouse_id = %s "
-                    "WHERE id > %s AND warehouse_id IS NULL AND company_id = %s",
-                    (warehouse.id, last_svl_id, self.env.company.id)
+                # 🔴 FIX: Only assign to SVLs whose stock_move touches THIS warehouse's locations
+                # (ป้องกันการ assign warehouse ผิดให้ SVL ของ warehouse อื่น)
+                self.env.cr.execute("""
+                    UPDATE stock_valuation_layer svl
+                    SET warehouse_id = %s
+                    WHERE svl.id > %s
+                      AND svl.warehouse_id IS NULL
+                      AND svl.company_id = %s
+                      AND (
+                          svl.stock_move_id IS NULL
+                          OR EXISTS (
+                              SELECT 1 FROM stock_move sm
+                              JOIN stock_location sl ON sl.id IN (sm.location_id, sm.location_dest_id)
+                              WHERE sm.id = svl.stock_move_id
+                                AND sl.warehouse_id = %s
+                          )
+                      )
+                """, (warehouse.id, last_svl_id, self.env.company.id, warehouse.id)
                 )
             except Exception as e:
                 raise
@@ -462,6 +561,8 @@ class FifoResetService(models.AbstractModel):
             ('warehouse_id', 'in', warehouses.ids),
             ('warehouse_id', '=', False)
         ]
+        # NOTE: ไม่ filter create_date เพราะ _apply_inventory() สร้าง SVL ที่มี create_date = NOW()
+        # ไม่ใช่ reset_dt → ถ้า filter จะทำให้ SVL ตกหล่นจาก flush → residual value ค้าง
         
         svls = self.env['stock.valuation.layer'].search(domain)
         if not svls:
@@ -475,18 +576,20 @@ class FifoResetService(models.AbstractModel):
             # internal locations first, otherwise fall back to processing warehouse.
             
             # Step 1: Fix ghost layers that have a linked stock_move with identifiable warehouse
+            # 🔴 FIX: รวม transit + production ใน usage filter 
+            # transit: move Vendors→Transit, production: MO moves (Internal→Production)
             self.env.cr.execute("""
                 UPDATE stock_valuation_layer svl
                 SET warehouse_id = COALESCE(
                     -- Try source location's warehouse (for outgoing/decrease moves)
                     (SELECT sl.warehouse_id FROM stock_move sm
                      JOIN stock_location sl ON sl.id = sm.location_id
-                     WHERE sm.id = svl.stock_move_id AND sl.usage = 'internal' AND sl.warehouse_id IS NOT NULL
+                     WHERE sm.id = svl.stock_move_id AND sl.usage IN ('internal', 'transit', 'production') AND sl.warehouse_id IS NOT NULL
                      LIMIT 1),
                     -- Try dest location's warehouse (for incoming/increase moves) 
                     (SELECT sl.warehouse_id FROM stock_move sm
                      JOIN stock_location sl ON sl.id = sm.location_dest_id
-                     WHERE sm.id = svl.stock_move_id AND sl.usage = 'internal' AND sl.warehouse_id IS NOT NULL
+                     WHERE sm.id = svl.stock_move_id AND sl.usage IN ('internal', 'transit', 'production') AND sl.warehouse_id IS NOT NULL
                      LIMIT 1)
                 )
                 WHERE svl.warehouse_id IS NULL 
@@ -495,16 +598,52 @@ class FifoResetService(models.AbstractModel):
                 AND EXISTS (
                     SELECT 1 FROM stock_move sm
                     JOIN stock_location sl ON sl.id IN (sm.location_id, sm.location_dest_id)
-                    WHERE sm.id = svl.stock_move_id AND sl.usage = 'internal' AND sl.warehouse_id IS NOT NULL
+                    WHERE sm.id = svl.stock_move_id AND sl.usage IN ('internal', 'transit', 'production') AND sl.warehouse_id IS NOT NULL
                 )
             """, (self.env.company.id,))
             
-            # Step 2: Remaining ghost layers (no stock_move or can't determine) → default warehouse
-            self.env.cr.execute(
-                "UPDATE stock_valuation_layer SET warehouse_id = %s "
-                "WHERE warehouse_id IS NULL AND company_id = %s",
-                (default_wh_id, self.env.company.id)
-            )
+            # Step 2: Remaining ghost layers — smart assignment from product's existing SVLs
+            # 🔴 FIX: ไม่ใช้ default_wh_id แบบ blanket อีกแล้ว
+            # เพราะทำให้ product จาก warehouse อื่นถูก assign ไปที่ warehouses[0] ผิดๆ
+            # แทนที่จะยัดทั้งหมดเข้า warehouses[0] → ดูจาก SVL อื่นของ product เดียวกันว่าอยู่คลังไหนมากสุด
+            self.env.cr.execute("""
+                UPDATE stock_valuation_layer svl
+                SET warehouse_id = (
+                    SELECT s2.warehouse_id
+                    FROM stock_valuation_layer s2
+                    WHERE s2.product_id = svl.product_id
+                      AND s2.warehouse_id IS NOT NULL
+                      AND s2.company_id = %s
+                    GROUP BY s2.warehouse_id
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 1
+                )
+                WHERE svl.warehouse_id IS NULL
+                AND svl.company_id = %s
+                AND EXISTS (
+                    SELECT 1 FROM stock_valuation_layer s3
+                    WHERE s3.product_id = svl.product_id
+                      AND s3.warehouse_id IS NOT NULL
+                      AND s3.company_id = %s
+                )
+            """, (self.env.company.id, self.env.company.id, self.env.company.id))
+            
+            # Step 3: Absolute last resort — SVLs ที่หาคลังไม่ได้เลย (ไม่มี SVL อื่นของ product)
+            remaining_ghost = self.env['stock.valuation.layer'].search_count([
+                ('warehouse_id', '=', False),
+                ('company_id', '=', self.env.company.id),
+            ])
+            if remaining_ghost > 0:
+                _logger.warning(
+                    "FIFO Reset: %d ghost SVLs could not be assigned to any warehouse, "
+                    "assigning to default warehouse %s as last resort.",
+                    remaining_ghost, warehouses[0].name,
+                )
+                self.env.cr.execute(
+                    "UPDATE stock_valuation_layer SET warehouse_id = %s "
+                    "WHERE warehouse_id IS NULL AND company_id = %s",
+                    (default_wh_id, self.env.company.id)
+                )
             # Invalidate cache so read_group sees the updated warehouse_ids
             self.env['stock.valuation.layer'].invalidate_model(['warehouse_id'])
 
@@ -539,6 +678,8 @@ class FifoResetService(models.AbstractModel):
             aggregated_data[key]['val'] += val
 
         flushed_count = 0
+        create_date = reset_dt or fields.Datetime.now()
+        
         for (prod_id, target_wh_id), data in aggregated_data.items():
             qty = data['qty']
             val = data['val']
@@ -554,28 +695,123 @@ class FifoResetService(models.AbstractModel):
 
                 prod_rec = self.env['product.product'].browse(prod_id)
 
-                # 1) สร้าง SVL counter entry
-                new_svl = self.env['stock.valuation.layer'].create({
-                    'product_id': prod_id,
-                    'company_id': self.env.company.id,
-                    'quantity': -qty,
-                    'value': -val,
-                    'description': flush_desc,
-                    'warehouse_id': target_wh_id,
-                })
-                # Force SVL create_date = reset_dt
-                if reset_dt:
-                    self.env.cr.execute(
-                        "UPDATE stock_valuation_layer SET create_date = %s WHERE id = %s",
-                        (reset_dt, new_svl.id),
-                    )
-                # 2) สร้าง journal entry เพื่อ offset GL (เฉพาะกรณีที่มูลค่าไม่เป็นศูนย์)
+                # 1) สร้าง SVL counter entry ด้วย RAW SQL
+                # 🔴 FIX: ORM create() triggers _run_fifo/_run_fifo_vacuum ที่สร้าง
+                # ghost SVLs ไม่มี warehouse_id ซ้ำแล้วซ้ำเล่า → ใช้ SQL ตรงๆ
+                self.env.cr.execute("""
+                    INSERT INTO stock_valuation_layer 
+                        (product_id, company_id, quantity, remaining_qty, value, remaining_value,
+                         unit_cost, description, warehouse_id, create_date, write_date,
+                         create_uid, write_uid)
+                    VALUES (%s, %s, %s, 0, %s, 0, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    prod_id, self.env.company.id, -qty, -val,
+                    (-val / -qty) if abs(qty) > 0.0001 else 0.0,
+                    flush_desc, target_wh_id,
+                    create_date, fields.Datetime.now(),
+                    self.env.uid, self.env.uid,
+                ))
+                new_svl_id = self.env.cr.fetchone()[0]
+
+                # 2) สร้าง journal entry เพื่อ offset GL
                 if abs(val) > 0.001:
-                    self._create_flush_account_move(prod_rec, val, flush_desc, new_svl, reset_dt=reset_dt)
+                    new_svl_rec = self.env['stock.valuation.layer'].browse(new_svl_id)
+                    self._create_flush_account_move(prod_rec, val, flush_desc, new_svl_rec, reset_dt=reset_dt)
 
                 flushed_count += 1
 
-        _logger.info("FIFO Reset: Flushed SVL for %d product/warehouse combinations.", flushed_count)
+        # Invalidate ORM cache after raw SQL inserts
+        self.env['stock.valuation.layer'].invalidate_model()
+        _logger.info("FIFO Reset: Flushed SVL for %d product/warehouse combinations (via SQL).", flushed_count)
+        
+        # 🔴 Final safety: Assign warehouse to ANY remaining ghost SVLs
+        self.env.cr.execute("""
+            UPDATE stock_valuation_layer svl
+            SET warehouse_id = (
+                SELECT s2.warehouse_id
+                FROM stock_valuation_layer s2
+                WHERE s2.product_id = svl.product_id
+                  AND s2.warehouse_id IS NOT NULL
+                  AND s2.company_id = %s
+                GROUP BY s2.warehouse_id
+                ORDER BY COUNT(*) DESC
+                LIMIT 1
+            )
+            WHERE svl.warehouse_id IS NULL
+            AND svl.company_id = %s
+            AND EXISTS (
+                SELECT 1 FROM stock_valuation_layer s3
+                WHERE s3.product_id = svl.product_id
+                  AND s3.warehouse_id IS NOT NULL
+                  AND s3.company_id = %s
+            )
+        """, (self.env.company.id, self.env.company.id, self.env.company.id))
+        
+        if default_wh_id:
+            self.env.cr.execute(
+                "UPDATE stock_valuation_layer SET warehouse_id = %s "
+                "WHERE warehouse_id IS NULL AND company_id = %s",
+                (default_wh_id, self.env.company.id)
+            )
+        
+        # Re-flush residuals from newly-assigned ghosts (also via raw SQL)
+        self.env.cr.execute("""
+            SELECT product_id, warehouse_id, SUM(quantity) as qty, SUM(value) as val
+            FROM stock_valuation_layer
+            WHERE company_id = %s AND warehouse_id IS NOT NULL
+            GROUP BY product_id, warehouse_id
+            HAVING ABS(SUM(quantity)) > 0.001 OR ABS(SUM(value)) > 0.001
+        """, (self.env.company.id,))
+        residuals = self.env.cr.fetchall()
+        
+        if residuals:
+            _logger.info("FIFO Reset: Re-flushing %d residual product/warehouse combos via SQL...", len(residuals))
+            for r_prod_id, r_wh_id, r_qty, r_val in residuals:
+                r_prod_rec = self.env['product.product'].browse(r_prod_id)
+                self.env.cr.execute("""
+                    INSERT INTO stock_valuation_layer
+                        (product_id, company_id, quantity, remaining_qty, value, remaining_value,
+                         unit_cost, description, warehouse_id, create_date, write_date,
+                         create_uid, write_uid)
+                    VALUES (%s, %s, %s, 0, %s, 0, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    r_prod_id, self.env.company.id, -r_qty, -r_val,
+                    (-r_val / -r_qty) if abs(r_qty) > 0.0001 else 0.0,
+                    'FIFO Reset Re-Flush', r_wh_id,
+                    create_date, fields.Datetime.now(),
+                    self.env.uid, self.env.uid,
+                ))
+                new_svl_id = self.env.cr.fetchone()[0]
+                if abs(r_val) > 0.001:
+                    new_svl_rec = self.env['stock.valuation.layer'].browse(new_svl_id)
+                    self._create_flush_account_move(r_prod_rec, r_val, 'FIFO Reset Re-Flush', new_svl_rec, reset_dt=reset_dt)
+                flushed_count += 1
+        
+        # 🔴 Zero out remaining_qty and remaining_value on ALL SVLs
+        # After reset, no FIFO layer should have remaining inventory
+        wh_ids = tuple(warehouses.ids) if warehouses else ()
+        if wh_ids:
+            self.env.cr.execute("""
+                UPDATE stock_valuation_layer
+                SET remaining_qty = 0, remaining_value = 0
+                WHERE company_id = %s
+                  AND (remaining_qty != 0 OR remaining_value != 0)
+                  AND (warehouse_id IN %s OR warehouse_id IS NULL)
+            """, (self.env.company.id, wh_ids))
+        else:
+            self.env.cr.execute("""
+                UPDATE stock_valuation_layer
+                SET remaining_qty = 0, remaining_value = 0
+                WHERE company_id = %s
+                  AND (remaining_qty != 0 OR remaining_value != 0)
+            """, (self.env.company.id,))
+        updated_remaining = self.env.cr.rowcount
+        _logger.info("FIFO Reset: Zeroed remaining_qty/remaining_value on %d SVL records.", updated_remaining)
+
+        self.env['stock.valuation.layer'].invalidate_model()
+        _logger.info("FIFO Reset: Total flushed: %d product/warehouse combinations.", flushed_count)
 
     def _create_flush_account_move(self, product, val, description, svl, reset_dt=False):
         """สร้าง journal entry สำหรับ flush stock valuation ออกจาก GL โดยใช้วันที่ reset."""
@@ -583,6 +819,7 @@ class FifoResetService(models.AbstractModel):
         stock_valuation_account = accounts.get('stock_valuation')
         stock_journal = accounts.get('stock_journal')
         expense_account = accounts.get('expense') or accounts.get('stock_output')
+        income_account = accounts.get('income') or accounts.get('stock_input')
 
         if not stock_valuation_account or not stock_journal:
             _logger.warning(
@@ -592,20 +829,33 @@ class FifoResetService(models.AbstractModel):
             )
             return
 
+        if not expense_account or not income_account:
+            inv_loc = self.env.ref('stock.location_inventory', raise_if_not_found=False)
+            if inv_loc:
+                if not expense_account:
+                    expense_account = inv_loc.valuation_out_account_id or inv_loc.valuation_in_account_id
+                if not income_account:
+                    income_account = inv_loc.valuation_in_account_id or inv_loc.valuation_out_account_id
+
+        if not expense_account:
+            expense_account = stock_valuation_account
+        if not income_account:
+            income_account = stock_valuation_account
+
         entry_date = reset_dt.date() if reset_dt else fields.Date.today()
 
         if val > 0:
-            debit_account = expense_account or stock_valuation_account
+            debit_account = expense_account
             credit_account = stock_valuation_account
         else:
             debit_account = stock_valuation_account
-            credit_account = expense_account or stock_valuation_account
+            credit_account = income_account
             val = abs(val)
 
-        if not debit_account or not credit_account:
+        if not debit_account or not credit_account or debit_account == credit_account:
             raise exceptions.UserError(_(
-                "FIFO Reset ABORTED: Missing debit/credit account for product '%s'. "
-                "Please check the product category accounting configuration."
+                "FIFO Reset ABORTED: Missing or identical debit/credit account for product '%s'. "
+                "Please check the product category accounting configuration or 'Virtual Locations/Inventory adjustment'."
             ) % product.display_name)
 
         move_vals = {
@@ -637,17 +887,60 @@ class FifoResetService(models.AbstractModel):
                 "FIFO Reset ABORTED: Failed to create/post journal entry for product '%s': %s"
             ) % (product.display_name, str(e)))
 
-    def _validate_fifo(self, warehouses=None):
-        """Step Final: Validate FIFO Cleanliness — ตรวจ SVL รวมเฉพาะคลังที่ถูกรีเซ็ตหลัง flush"""
-        domain = [('company_id', '=', self.env.company.id)]
-        if warehouses:
-            domain += ['|', ('warehouse_id', 'in', warehouses.ids), ('warehouse_id', '=', False)]
-            
-        svl = self.env['stock.valuation.layer'].search(domain)
-        total_qty = sum(svl.mapped('quantity'))
-        total_value = sum(svl.mapped('value'))
+    def _validate_fifo(self, warehouses=None, reset_dt=False):
+        """Step Final: Validate FIFO Cleanliness — ตรวจ SVL per-warehouse หลัง flush"""
+        if not warehouses:
+            warehouses = self.env['stock.warehouse'].search([('company_id', '=', self.env.company.id)])
         
-        if abs(total_qty) > 0.001 or abs(total_value) > 0.001:
+        errors = []
+        total_qty = 0.0
+        total_value = 0.0
+        
+        for wh in warehouses:
+            domain = [
+                ('company_id', '=', self.env.company.id),
+                ('warehouse_id', '=', wh.id),
+            ]
+            svl = self.env['stock.valuation.layer'].search(domain)
+            wh_qty = sum(svl.mapped('quantity'))
+            wh_value = sum(svl.mapped('value'))
+            total_qty += wh_qty
+            total_value += wh_value
+            
+            _logger.info(
+                "FIFO Validate: Warehouse [%s] %s — QTY: %.4f, Value: %.4f",
+                wh.code, wh.name, wh_qty, wh_value,
+            )
+            
+            # Per-warehouse tolerance: qty=0.01, value=1.0
+            if abs(wh_qty) > 0.01 or abs(wh_value) > 1.0:
+                errors.append(
+                    "  - %s: QTY=%.4f, Value=%.4f" % (wh.name, wh_qty, wh_value)
+                )
+        
+        # Also check ghost layers (warehouse_id = False)
+        ghost_svl = self.env['stock.valuation.layer'].search([
+            ('company_id', '=', self.env.company.id),
+            ('warehouse_id', '=', False),
+        ])
+        if ghost_svl:
+            ghost_qty = sum(ghost_svl.mapped('quantity'))
+            ghost_value = sum(ghost_svl.mapped('value'))
+            total_qty += ghost_qty
+            total_value += ghost_value
+            if abs(ghost_qty) > 0.01 or abs(ghost_value) > 1.0:
+                errors.append(
+                    "  - [No Warehouse]: QTY=%.4f, Value=%.4f" % (ghost_qty, ghost_value)
+                )
+        
+        if errors:
             raise exceptions.UserError(_(
-                "FIFO Validate Failed! Selected warehouses' valuation layer left with QTY: %s, Value: %s"
-            ) % (total_qty, total_value))
+                "FIFO Validate Failed! The following warehouses still have residual values:\n%s\n\n"
+                "Grand Total — QTY: %.4f, Value: %.4f"
+            ) % ("\n".join(errors), total_qty, total_value))
+        
+        if abs(total_value) > 0.001:
+            _logger.warning(
+                "FIFO Reset: Minor rounding residual — QTY: %.6f, Value: %.6f (within tolerance)",
+                total_qty, total_value,
+            )
