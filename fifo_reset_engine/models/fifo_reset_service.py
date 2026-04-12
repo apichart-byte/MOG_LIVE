@@ -228,6 +228,25 @@ class FifoResetService(models.AbstractModel):
         _logger.info("=" * 60)
         self._flush_svl(summary, warehouses=warehouses, reset_dt=reset_dt)
 
+        # 🔴 SAFETY NET: Final sweep to backdate any remaining SVLs
+        # that still have create_date > reset_dt after all processing.
+        # This catches edge cases from ORM hooks, _run_fifo cascade,
+        # account.move.action_post() side-effects, etc.
+        if reset_dt:
+            self.env.cr.execute("""
+                UPDATE stock_valuation_layer
+                SET create_date = %s
+                WHERE company_id = %s
+                  AND create_date > %s
+            """, (reset_dt, self.env.company.id, reset_dt))
+            final_backdated = self.env.cr.rowcount
+            if final_backdated > 0:
+                _logger.info(
+                    "FIFO Reset: Pipeline final backdate — fixed %d SVLs",
+                    final_backdated,
+                )
+            self.env['stock.valuation.layer'].invalidate_model(['create_date'])
+
         if not dry_run:
             self.env.cr.commit()
             _logger.info("FIFO Reset: Committed SVL flush")
@@ -512,7 +531,7 @@ class FifoResetService(models.AbstractModel):
                     if sml:
                         sml.write({'date': reset_dt})
 
-                    # 3) Override SVL create_date
+                    # 3) Override SVL create_date — เฉพาะ SVL ที่ผูก stock_move_id
                     inv_svls = self.env['stock.valuation.layer'].search([
                         ('stock_move_id', 'in', new_moves.ids),
                     ])
@@ -521,6 +540,19 @@ class FifoResetService(models.AbstractModel):
                             "UPDATE stock_valuation_layer SET create_date = %s WHERE id IN %s",
                             (reset_dt, tuple(inv_svls.ids)),
                         )
+
+                    # 3.1) Override SVL create_date — SVL ที่ไม่มี stock_move_id (FIFO cascade, rounding layers)
+                    # 🔴 FIX: Odoo _apply_inventory() อาจสร้าง SVL เพิ่มเติมจาก _run_fifo/_run_fifo_vacuum
+                    # ที่ไม่ผูก stock_move_id → create_date = NOW() ไม่ใช่ reset_dt
+                    # ทำให้ "Valuation at Date" filter ด้วย create_date <= cutoff_date ไม่เจอ SVL เหล่านี้
+                    # → ยอดไม่ balance เมื่อดู ณ วัน cutoff
+                    self.env.cr.execute("""
+                        UPDATE stock_valuation_layer
+                        SET create_date = %s
+                        WHERE id > %s
+                          AND company_id = %s
+                          AND create_date > %s
+                    """, (reset_dt, last_svl_id, self.env.company.id, reset_dt))
 
                     # 4) Fix related account.move dates
                     for move in new_moves:
@@ -812,6 +844,31 @@ class FifoResetService(models.AbstractModel):
 
         self.env['stock.valuation.layer'].invalidate_model()
         _logger.info("FIFO Reset: Total flushed: %d product/warehouse combinations.", flushed_count)
+
+        # ============================================================
+        # 🔴 FINAL FIX: Backdate ALL SVLs created during reset process
+        # ============================================================
+        # Problem: Odoo "Valuation at Date" uses create_date as filter.
+        # Some SVLs created by ORM hooks (_run_fifo cascade, action_post
+        # hooks, _run_fifo_vacuum, etc.) retain create_date = NOW()
+        # instead of reset_dt. This causes "Valuation at Date" at cutoff
+        # to show non-zero values because counter SVLs are invisible.
+        # Fix: Sweep all SVLs with create_date > reset_dt and backdate them.
+        if reset_dt:
+            self.env.cr.execute("""
+                UPDATE stock_valuation_layer
+                SET create_date = %s
+                WHERE company_id = %s
+                  AND create_date > %s
+            """, (reset_dt, self.env.company.id, reset_dt))
+            backdated = self.env.cr.rowcount
+            if backdated > 0:
+                _logger.info(
+                    "FIFO Reset: Final backdate sweep — fixed create_date on %d SVLs "
+                    "(from NOW() to %s) for correct 'Valuation at Date' display.",
+                    backdated, reset_dt,
+                )
+            self.env['stock.valuation.layer'].invalidate_model(['create_date'])
 
     def _create_flush_account_move(self, product, val, description, svl, reset_dt=False):
         """สร้าง journal entry สำหรับ flush stock valuation ออกจาก GL โดยใช้วันที่ reset."""
