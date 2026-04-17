@@ -16,4 +16,15 @@
             </xpath>
         </field>
     </record>
+
+    <record id="action_batch_recreate_delivery" model="ir.actions.server">
+        <field name="name">Recreate Delivery (Batch)</field>
+        <field name="model_id" ref="sale.model_sale_order"/>
+        <field name="binding_model_id" ref="sale.model_sale_order"/>
+        <field name="binding_view_types">list</field>
+        <field name="state">code</field>
+        <field name="code">
+            action = records.action_recreate_delivery_wizard_batch()
+        </field>
+    </record>
 </odoo>

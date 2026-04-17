@@ -68,6 +68,45 @@ class PurchaseOrder(models.Model):
             }
         }
 
+    def action_recreate_receipt_wizard_batch(self):
+        valid_orders = self.filtered(lambda o: o.can_recreate_transfer)
+        if not valid_orders:
+            raise UserError(_("No selected orders have remaining quantities to process."))
+            
+        total_qty = sum(
+            sum(abs(l.product_qty - l.qty_received) for l in o.order_line.filtered(
+                lambda l: (l.product_qty > l.qty_received if l.product_qty > 0 else l.product_qty < l.qty_received) 
+                and l.product_id.type in ['product', 'consu']
+            )) for o in valid_orders
+        )
+        line_count = sum(
+            len(o.order_line.filtered(
+                lambda l: (l.product_qty > l.qty_received if l.product_qty > 0 else l.product_qty < l.qty_received) 
+                and l.product_id.type in ['product', 'consu']
+            )) for o in valid_orders
+        )
+        
+        warning_msg = False
+        active_pickings = valid_orders.mapped('picking_ids').filtered(lambda p: p.state in ['draft', 'waiting', 'confirmed', 'assigned'])
+        if active_pickings:
+            warning_msg = _("There are currently active receipts for some orders. Recreating may cause duplicate active transfers.")
+            
+        return {
+            'name': _('Recreate Receipt (Batch)'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'stock.transfer.recreate.wizard',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {
+                'default_order_model': 'purchase.order',
+                'default_order_ids': ','.join(map(str, valid_orders.ids)),
+                'default_is_batch': True,
+                'default_line_count': line_count,
+                'default_total_qty': total_qty,
+                'default_warning_message': warning_msg,
+            }
+        }
+
     def _recreate_receipt_action(self):
         self.ensure_one()
         
