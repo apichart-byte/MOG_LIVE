@@ -571,13 +571,15 @@ class StockMove(models.Model):
                 elif original_move.location_dest_id and original_move.location_dest_id.usage == 'internal':
                     original_wh = original_move.location_dest_id.warehouse_id
                 
-                # CRITICAL FIX: Get unit cost from the ACTUAL delivery layer
-                # Do NOT try to consume from FIFO queue (it's empty after delivery)
-                # Instead, use the unit_cost that was calculated during the original delivery
+                # CRITICAL FIX v17.0.1.2.7: Get unit cost from the ACTUAL original layer
+                # Supports BOTH:
+                #   1. Sales returns (original = delivery → has NEGATIVE layer)
+                #   2. Vendor returns (original = receipt → has POSITIVE layer only)
+                # Also handles import ordering where return is processed before receipt
                 if original_wh:
                     try:
                         # Step 1: Find the NEGATIVE delivery layer from original move
-                        # This layer contains the actual unit_cost used when delivering
+                        # This works for SALES RETURNS where original was a delivery/sale
                         original_delivery_layers = valuation_layer_model.search([
                             ('stock_move_id', '=', original_move.id),
                             ('quantity', '<', 0),  # NEGATIVE layer (outgoing/consumption)
@@ -586,10 +588,9 @@ class StockMove(models.Model):
                         
                         if original_delivery_layers:
                             # The delivery layer's unit_cost is the FIFO cost at consumption time
-                            # (which includes landed costs already applied)
                             base_delivery_unit_cost = abs(original_delivery_layers[0].unit_cost)
                             
-                            # Step 2: Get any additional landed costs that should be included
+                            # Get any additional landed costs
                             lc_model = self.env['stock.valuation.layer.landed.cost']
                             delivery_lc_records = lc_model.search([
                                 ('valuation_layer_id', '=', original_delivery_layers[0].id),
@@ -598,37 +599,92 @@ class StockMove(models.Model):
                             
                             unit_lc = 0.0
                             if delivery_lc_records:
-                                # Get unit landed cost (landed_cost_value / quantity)
                                 lc_value = sum(delivery_lc_records.mapped('landed_cost_value'))
                                 lc_qty = delivery_lc_records[0].quantity or 1
                                 unit_lc = lc_value / lc_qty if lc_qty > 0 else 0.0
                             
-                            # Total unit cost = base delivery cost + unit landed cost
                             return_unit_cost = base_delivery_unit_cost + unit_lc
                             return_total_cost = return_unit_cost * move.product_qty
                             
                             _logger.info(
                                 f"Return move {move.name}: "
-                                f"Using delivery layer unit cost: {base_delivery_unit_cost}/unit + "
+                                f"Using NEGATIVE delivery layer unit cost: {base_delivery_unit_cost}/unit + "
                                 f"LC: {unit_lc}/unit = {return_unit_cost}/unit total"
                             )
                         else:
-                            # Fallback: Try FIFO calculation if no delivery layer found
-                            _logger.warning(
-                                f"Return move {move.name}: "
-                                f"No delivery layer found, falling back to FIFO calculation"
-                            )
+                            # 🔴 FIX v17.0.1.2.7: Step 2 - Try POSITIVE receipt layer
+                            # For VENDOR RETURNS: original move is a receipt (Vendor → Stock)
+                            # which only has a POSITIVE layer, not negative
+                            original_receipt_layers = valuation_layer_model.search([
+                                ('stock_move_id', '=', original_move.id),
+                                ('quantity', '>', 0),  # POSITIVE layer (receipt/incoming)
+                            ], limit=1)
                             
-                            fifo_result = fifo_service.calculate_fifo_cost_with_landed_cost(
-                                move.product_id,
-                                original_wh,
-                                move.product_qty,
-                                move.company_id.id
-                            )
-                            
-                            if fifo_result['cost'] > 0 and fifo_result['qty'] > 0:
-                                return_unit_cost = fifo_result['unit_cost']
-                                return_total_cost = fifo_result['cost']
+                            if original_receipt_layers:
+                                base_receipt_unit_cost = abs(original_receipt_layers[0].unit_cost)
+                                
+                                # Get any landed costs on the receipt layer
+                                lc_model = self.env['stock.valuation.layer.landed.cost']
+                                receipt_lc_records = lc_model.search([
+                                    ('valuation_layer_id', '=', original_receipt_layers[0].id),
+                                ])
+                                
+                                unit_lc = 0.0
+                                if receipt_lc_records:
+                                    lc_value = sum(receipt_lc_records.mapped('landed_cost_value'))
+                                    lc_qty = abs(original_receipt_layers[0].quantity) or 1
+                                    unit_lc = lc_value / lc_qty if lc_qty > 0 else 0.0
+                                
+                                return_unit_cost = base_receipt_unit_cost + unit_lc
+                                return_total_cost = return_unit_cost * move.product_qty
+                                
+                                _logger.info(
+                                    f"Return move {move.name}: "
+                                    f"Using POSITIVE receipt layer unit cost: {base_receipt_unit_cost}/unit + "
+                                    f"LC: {unit_lc}/unit = {return_unit_cost}/unit total "
+                                    f"(original move was a receipt, not a delivery)"
+                                )
+                            else:
+                                # Step 3: Try FIFO calculation
+                                _logger.warning(
+                                    f"Return move {move.name}: "
+                                    f"No original layer found (neither negative nor positive), "
+                                    f"trying FIFO calculation"
+                                )
+                                
+                                fifo_result = fifo_service.calculate_fifo_cost_with_landed_cost(
+                                    move.product_id,
+                                    original_wh,
+                                    move.product_qty,
+                                    move.company_id.id
+                                )
+                                
+                                if isinstance(fifo_result, dict) and fifo_result.get('cost', 0) > 0 and fifo_result.get('qty', 0) > 0:
+                                    return_unit_cost = fifo_result['unit_cost']
+                                    return_total_cost = fifo_result['cost']
+                                    _logger.info(
+                                        f"Return move {move.name}: "
+                                        f"Using FIFO calculation: {return_unit_cost}/unit"
+                                    )
+                                else:
+                                    # 🔴 FIX v17.0.1.2.7: Step 4 - Final fallback
+                                    # Use original move's price_unit (from PO/SO)
+                                    # This handles import ordering where return is processed
+                                    # before receipt SVL exists
+                                    original_price = abs(original_move.price_unit) if original_move.price_unit else 0.0
+                                    if original_price > 0:
+                                        return_unit_cost = original_price
+                                        return_total_cost = return_unit_cost * move.product_qty
+                                        _logger.info(
+                                            f"Return move {move.name}: "
+                                            f"Using original move price_unit fallback: {return_unit_cost}/unit"
+                                        )
+                                    else:
+                                        _logger.warning(
+                                            f"Return move {move.name}: "
+                                            f"Could not determine return cost from any source. "
+                                            f"Layer will keep its current unit_cost."
+                                        )
                     except Exception as e:
                         _logger.warning(
                             f"Failed to calculate return unit cost for move {move.name}: {e}"
