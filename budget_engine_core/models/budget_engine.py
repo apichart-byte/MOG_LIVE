@@ -57,7 +57,7 @@ class BudgetEngine(models.AbstractModel):
         """
         self._validate_context(context_data)
         vals = self._build_commitment_vals(context_data, state='reserved')
-        commitment = self.env['budget.commitment'].create(vals)
+        commitment = self.env['budget.commitment'].sudo().create(vals)
         return commitment
 
     @api.model
@@ -76,18 +76,29 @@ class BudgetEngine(models.AbstractModel):
             return existing
         # No prior reservation: create a usage record directly
         vals = self._build_commitment_vals(context_data, state='used')
-        return self.env['budget.commitment'].create(vals)
+        return self.env['budget.commitment'].sudo().create(vals)
 
     @api.model
     def release_budget(self, context_data):
         """
-        Release (cancel) an existing 'reserved' commitment.
+        Release an existing commitment created by this document.
 
-        Looks up existing reservations by document_model + document_id.
+        Looks up existing commitments by document_model + document_id.
+        This is used both for cancelling a reservation before it is consumed
+        and for undoing a consumed commitment when the source document is
+        cancelled after confirmation.
         Returns the updated commitment record(s).
         """
         self._validate_context(context_data)
-        existing = self._find_reservations(context_data)
+        domain = [
+            ('document_model', '=', context_data['document_model']),
+            ('document_id', '=', context_data['document_id']),
+            ('state', 'in', ('reserved', 'used')),
+            ('budget_source', '=', context_data['budget_source']),
+        ]
+        if context_data.get('analytic_account_id'):
+            domain.append(('analytic_account_id', '=', context_data['analytic_account_id']))
+        existing = self.env['budget.commitment'].sudo().search(domain)
         if existing:
             existing.action_release()
         return existing
@@ -128,4 +139,4 @@ class BudgetEngine(models.AbstractModel):
         ]
         if context_data.get('analytic_account_id'):
             domain.append(('analytic_account_id', '=', context_data['analytic_account_id']))
-        return self.env['budget.commitment'].search(domain)
+        return self.env['budget.commitment'].sudo().search(domain)

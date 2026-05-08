@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models, _
+from odoo.addons.biz_monthly_analytic_budget.models.budget_utils import find_active_monthly_plan
 
 class MonthlyBudgetRequestReasonWizard(models.TransientModel):
     _name = 'monthly.budget.request.reason.wizard'
@@ -8,6 +9,7 @@ class MonthlyBudgetRequestReasonWizard(models.TransientModel):
     document_type = fields.Selection([
         ('pr', 'Purchase Requisition (PR)'),
         ('po', 'Purchase Order (PO)'),
+        ('bill', 'Vendor Bill'),
     ], string='Document Type', required=True)
     
     ref_id = fields.Integer(string='Document ID', required=True)
@@ -17,30 +19,38 @@ class MonthlyBudgetRequestReasonWizard(models.TransientModel):
     amount_reserved = fields.Float(string='Already Reserved')
     amount_limit = fields.Float(string='Budget Limit')
     amount_overage = fields.Float(string='Over by')
+    # Pass the active plan so auto-approve threshold can be evaluated
+    plan_id = fields.Many2one('monthly.budget.plan', string='Budget Plan')
     
     reason = fields.Text(string='Reason', required=True, help="เหตุผลในการขอเพิ่มงบประมาณชั่วคราว")
 
     def action_submit_request(self):
         self.ensure_one()
         ApprovalReq = self.env['buz.monthly.budget.approval.request']
-        
-        ref_field = 'ref_pr_id' if self.document_type == 'pr' else 'ref_po_id'
+
+        ref_field_map = {
+            'pr': 'ref_pr_id',
+            'po': 'ref_po_id',
+            'bill': 'ref_bill_id',
+        }
+        ref_field = ref_field_map.get(self.document_type, 'ref_po_id')
 
         req = ApprovalReq._get_or_create_pending_request(
             document_type=self.document_type,
             ref_field=ref_field,
             ref_id=self.ref_id,
-            budget_line=False, # Store False and put names in budget_line_name
+            budget_line=False,  # Multiple analytics — store names in budget_line_name
+            plan_id=self.plan_id.id if self.plan_id else False,
             amount_requested=self.amount_requested,
             amount_used=self.amount_used,
             amount_reserved=self.amount_reserved,
             amount_limit=self.amount_limit,
             amount_overage=self.amount_overage,
         )
-        
+
         if self.budget_line_names:
             req.budget_line_name = self.budget_line_names
-        
+
         # Set the reason
         req.reason = self.reason
 
@@ -50,7 +60,8 @@ class MonthlyBudgetRequestReasonWizard(models.TransientModel):
         # Post to source document chatter
         model_map = {
             'pr': 'employee.purchase.requisition',
-            'po': 'purchase.order'
+            'po': 'purchase.order',
+            'bill': 'account.move',
         }
         doc = self.env[model_map[self.document_type]].browse(self.ref_id)
         if doc.exists():

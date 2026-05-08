@@ -26,6 +26,7 @@ class AccountPayment(models.Model):
         Solution:
         - Force context with payment date before seeking lines
         """
+        self.ensure_one()
         _logger.info('🔍 [PAYMENT] _seek_for_lines called for payment: %s | Date: %s', 
                      self.name or 'New', self.date)
         
@@ -41,9 +42,10 @@ class AccountPayment(models.Model):
         """
         Override to maintain payment date context when synchronizing
         """
-        if self.date:
-            self = self.with_context(date=self.date)
-        return super()._synchronize_from_moves(changed_fields)
+        for payment in self:
+            payment_ctx = payment.with_context(date=payment.date) if payment.date else payment
+            super(AccountPayment, payment_ctx)._synchronize_from_moves(changed_fields)
+        return
 
 
 class AccountMoveLine(models.Model):
@@ -85,13 +87,21 @@ class AccountMove(models.Model):
         """
         Override to ensure payment date is used when recomputing amounts
         """
-        # For payment moves, force context with move date
-        if self.payment_id and self.date:
-            self = self.with_context(date=self.date)
-            _logger.debug('🔍 [MOVE] Recomputing with forced date: %s for payment: %s', 
-                         self.date, self.payment_id.name)
-        
-        return super()._recompute_dynamic_lines(recompute_all_taxes, recompute_tax_base_amount)
+        for move in self:
+            # For payment moves, force context with the move date before recomputing.
+            if move.payment_id and move.date:
+                move = move.with_context(date=move.date)
+                _logger.debug(
+                    '🔍 [MOVE] Recomputing with forced date: %s for payment: %s',
+                    move.date,
+                    move.payment_id.name,
+                )
+
+            super(AccountMove, move)._recompute_dynamic_lines(
+                recompute_all_taxes,
+                recompute_tax_base_amount,
+            )
+        return
     
     @api.model
     def _get_accounting_date(self, invoice_date, has_tax):
