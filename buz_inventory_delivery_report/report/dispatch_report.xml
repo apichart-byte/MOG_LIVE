@@ -183,8 +183,18 @@
                             </div>
                             
                             <!-- Product Code - รหัสสินค้า -->
-                            <div t-attf-style="position: absolute; top: {{current_top}}mm; left: {{config.col_code_left * px_to_mm}}mm; white-space: nowrap; word-break: keep-all;">
-                                <span t-field="line.product_id.default_code"/>
+                            <div t-attf-style="position: absolute; top: {{current_top}}mm; left: {{config.col_code_left * px_to_mm}}mm; line-height: 1.0;">
+                                <t t-set="p_code" t-value="line.product_id.default_code or ''"/>
+                                <t t-if="len(p_code) &gt; 10">
+                                    <div t-esc="p_code[:10]"/>
+                                    <div t-esc="p_code[10:20]"/>
+                                    <t t-if="len(p_code) &gt; 20">
+                                        <div t-esc="p_code[20:]"/>
+                                    </t>
+                                </t>
+                                <t t-else="">
+                                    <span t-esc="p_code"/>
+                                </t>
                             </div>
                             
                             <!-- Product Name - ชื่อสินค้า -->
