@@ -27,6 +27,9 @@
                 <t t-set="move_lines" t-value="o.move_ids"/>
                 <t t-set="groups_of_10" t-value="[move_lines[i:i+lines_per_page] for i in range(0, len(move_lines), lines_per_page)]"/>
                 <t t-set="page_num" t-value="0"/>
+                <t t-set="info_line_gap_px" t-value="max(30, int((config.font_size or 14) * 1.8))"/>
+                <t t-set="customer_address_line2_top_px" t-value="max(config.customer_address_line2_top, config.customer_address_top + info_line_gap_px)"/>
+                <t t-set="dispatch_location_top_px" t-value="max(config.dispatch_location_top, customer_address_line2_top_px + info_line_gap_px)"/>
 
                 <t t-foreach="groups_of_10" t-as="group">
                     <div class="page" t-attf-style="width: 216mm; height: 279mm; position: relative; font-family: {{config.font_family or 'Sarabun, sans-serif'}}; font-size: {{config.font_size or 14}}px; {{page_num != 0 and 'page-break-before: always;' or ''}} margin: 0; padding: 0; overflow: visible; box-sizing: border-box;">
@@ -132,27 +135,20 @@
                     </div>
                     
                     <!-- Customer Address Line 1 - ที่อยู่บรรทัด 1 -->
-    <div t-attf-style="position: absolute; top: {{config.customer_address_top * px_to_mm}}mm; left: {{config.customer_address_left * px_to_mm}}mm; max-width: 80mm;" class="thai-text">
-        <t t-if="o.partner_id.street">
-            <span t-field="o.partner_id.street"/>
-            <t t-if="o.partner_id.street2">
-                <span> </span><span t-field="o.partner_id.street2"/>
-            </t>
-        </t>
-    </div>
-    
-    <!-- Customer Address Line 2 - ที่อยู่บรรทัด 2 (อำเภอ จังหวัด รหัสไปรษณีย์) -->
-    <div t-attf-style="position: absolute; top: {{config.customer_address_line2_top * px_to_mm}}mm; left: {{config.customer_address_line2_left * px_to_mm}}mm; max-width: 80mm;" class="thai-text">
-        <t t-set="address_parts" t-value="[]"/>
-        <t t-if="o.partner_id.city" t-set="address_parts" t-value="address_parts + [o.partner_id.city]"/>
-        <t t-if="o.partner_id.state_id" t-set="address_parts" t-value="address_parts + [o.partner_id.state_id.name]"/>
-        <t t-if="o.partner_id.zip" t-set="address_parts" t-value="address_parts + [o.partner_id.zip]"/>
-        <span t-esc="' '.join(address_parts)"/>
-    </div>
+                    <div t-attf-style="position: absolute; top: {{config.customer_address_top * px_to_mm}}mm; left: {{config.customer_address_left * px_to_mm}}mm; max-width: {{config.customer_address_width * px_to_mm}}mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" class="thai-text">
+                        <t t-set="address_line1_parts" t-value="[]"/>
+                        <t t-if="o.partner_id.street" t-set="address_line1_parts" t-value="address_line1_parts + [o.partner_id.street]"/>
+                        <t t-if="o.partner_id.street2" t-set="address_line1_parts" t-value="address_line1_parts + [o.partner_id.street2]"/>
+                        <span t-esc="' '.join(address_line1_parts)"/>
+                    </div>
                     
-                    <!-- Customer Phone - เบอร์โทรศัพท์ -->
-                    <div t-attf-style="position: absolute; top: {{config.customer_phone_top * px_to_mm}}mm; left: {{config.customer_phone_left * px_to_mm}}mm;" class="thai-text">
-                        <span t-field="o.partner_id.phone"/>
+                    <!-- Customer Address Line 2 - ที่อยู่บรรทัด 2 (อำเภอ จังหวัด รหัสไปรษณีย์) -->
+                    <div t-attf-style="position: absolute; top: {{customer_address_line2_top_px * px_to_mm}}mm; left: {{config.customer_address_line2_left * px_to_mm}}mm; max-width: {{config.customer_address_width * px_to_mm}}mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" class="thai-text">
+                        <t t-set="address_parts" t-value="[]"/>
+                        <t t-if="o.partner_id.city" t-set="address_parts" t-value="address_parts + [o.partner_id.city]"/>
+                        <t t-if="o.partner_id.state_id" t-set="address_parts" t-value="address_parts + [o.partner_id.state_id.name]"/>
+                        <t t-if="o.partner_id.zip" t-set="address_parts" t-value="address_parts + [o.partner_id.zip]"/>
+                        <span t-esc="' '.join(address_parts)"/>
                     </div>
                     
                     <!-- Vehicle Type - ประเภทรถ -->
@@ -171,7 +167,7 @@
                     </div>
                     
                     <!-- Dispatch Location - สถานที่จ่ายสินค้า -->
-                    <div t-attf-style="position: absolute; top: {{config.dispatch_location_top * px_to_mm}}mm; left: {{config.dispatch_location_left * px_to_mm}}mm;" class="thai-text">
+                    <div t-attf-style="position: absolute; top: {{dispatch_location_top_px * px_to_mm}}mm; left: {{config.dispatch_location_left * px_to_mm}}mm;" class="thai-text">
                         <span t-field="o.dispatch_location"/>
                     </div>
                     
@@ -192,7 +188,7 @@
                             </div>
                             
                             <!-- Product Name - ชื่อสินค้า -->
-                            <div t-attf-style="position: absolute; top: {{current_top}}mm; left: {{config.col_name_left * px_to_mm}}mm; max-width: 60mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            <div t-attf-style="position: absolute; top: {{current_top}}mm; left: {{config.col_name_left * px_to_mm}}mm; max-width: 120mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                                 <span t-field="line.product_id.name"/>
                             </div>
                             
