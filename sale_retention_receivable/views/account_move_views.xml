@@ -29,7 +29,7 @@
             <!-- Retention fields in invoice -->
             <xpath expr="//page[@id='other_tab']//group" position="inside">
                 <field name="retention_enabled" invisible="1"/>
-                <group name="retention" string="Retention" groups="account.group_account_invoice"
+                <group name="retention" string="Retention" groups="sale_retention_receivable.group_retention_user,account.group_account_user"
                        invisible="move_type not in ('out_invoice', 'out_refund')">
                     <field name="retention_enabled"/>
                     <field name="retention_percent"

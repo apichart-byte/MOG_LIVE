@@ -7,7 +7,7 @@
         <field name="arch" type="xml">
             <xpath expr="//page[@name='other_information']" position="inside">
                 <field name="retention_enabled" invisible="1"/>
-                <group name="retention" string="Retention" groups="account.group_account_invoice">
+                <group name="retention" string="Retention" groups="sale_retention_receivable.group_retention_user,account.group_account_user">
                     <field name="retention_enabled"/>
                     <field name="retention_percent"
                            invisible="not retention_enabled"

@@ -113,8 +113,11 @@ class ReportDPExcel(models.AbstractModel):
                     ) if move else 0.0
                     if move and move.bom_line_id:
                         unit_price = move.product_id.lst_price
+                        parent_bom_text = sale_line.name if sale_line else ""
                     else:
                         unit_price = sale_line.price_unit if sale_line else 0.0
+                        parent_bom_text = ""
+                        
                     rows.append(
                         {
                             "sequence": sequence,
@@ -128,9 +131,10 @@ class ReportDPExcel(models.AbstractModel):
                             "shipping_address": self._safe_text(
                                 sale_order.partner_shipping_id.contact_address
                             ),
+                            "parent_bom": self._safe_text(parent_bom_text),
                             "product_code": self._safe_text(move.product_id.default_code) if move else "",
                             "description": self._safe_text(
-                                move.description_picking or move.name or move.product_id.display_name
+                                move.product_id.name
                             ) if move else "",
                             "quantity": quantity,
                             "uom": self._safe_text(move.product_uom.name) if move else "",
@@ -254,6 +258,7 @@ class ReportDPExcel(models.AbstractModel):
             ("Sale Team", 18),
             ("SO.ref No.", 18),
             ("Shipping Address", 30),
+            ("Parent BOM", 34),
             ("Product Code", 16),
             ("Description", 34),
             ("Quantity", 12),
@@ -290,12 +295,13 @@ class ReportDPExcel(models.AbstractModel):
             sheet.write(row_idx, 6, row["sale_team"], text_format)
             sheet.write(row_idx, 7, row["so_ref"], text_format)
             sheet.write(row_idx, 8, row["shipping_address"], text_format)
-            sheet.write(row_idx, 9, row["product_code"], text_format)
-            sheet.write(row_idx, 10, row["description"], text_format)
-            sheet.write_number(row_idx, 11, row["quantity"] or 0.0, number_format)
-            sheet.write(row_idx, 12, row["uom"], center_format)
-            sheet.write_number(row_idx, 13, row["unit_price"] or 0.0, number_format)
-            sheet.write_number(row_idx, 14, row["sum_amount"] or 0.0, number_format)
+            sheet.write(row_idx, 9, row["parent_bom"], text_format)
+            sheet.write(row_idx, 10, row["product_code"], text_format)
+            sheet.write(row_idx, 11, row["description"], text_format)
+            sheet.write_number(row_idx, 12, row["quantity"] or 0.0, number_format)
+            sheet.write(row_idx, 13, row["uom"], center_format)
+            sheet.write_number(row_idx, 14, row["unit_price"] or 0.0, number_format)
+            sheet.write_number(row_idx, 15, row["sum_amount"] or 0.0, number_format)
             row_idx += 1
 
         if not rows:

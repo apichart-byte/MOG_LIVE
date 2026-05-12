@@ -45,6 +45,11 @@ class AccountPaymentVoucher(models.Model):
         domain="[('payment_type', '=', 'outbound'), ('journal_id', '=', destination_journal_id)]",
         tracking=True
     )
+    bank_free_dis = fields.Monetary(
+        string="Bank Fee",
+        currency_field="currency_id",
+        help="Optional bank fee deducted by the bank."
+    )
     check_number = fields.Char(string="Check Number", tracking=True)
     check_date = fields.Date(string="Check Date", tracking=True)
     check_pay_to = fields.Char(string="Pay to in name of", tracking=True)
@@ -53,6 +58,7 @@ class AccountPaymentVoucher(models.Model):
     amount_total_gross = fields.Monetary(string="Total Gross", currency_field="currency_id", compute="_compute_amount_totals", store=True)
     amount_total_wht = fields.Monetary(string="Total WHT", currency_field="currency_id", compute="_compute_amount_totals", store=True)
     amount_total_net = fields.Monetary(string="Total Net", currency_field="currency_id", compute="_compute_amount_totals", store=True)
+    amount_total_bank_fee = fields.Monetary(string="Total Bank Fee", currency_field="currency_id", compute="_compute_amount_totals", store=True)
     
     # Payment status based on amount paid
     payment_state = fields.Selection([
@@ -91,12 +97,13 @@ class AccountPaymentVoucher(models.Model):
             vals['name'] = self.env['ir.sequence'].next_by_code('buz.account.payment.voucher') or '/'
         return super().write(vals)
 
-    @api.depends("line_ids.amount_to_pay_gross", "line_ids.wht_amount")
+    @api.depends("line_ids.amount_to_pay_gross", "line_ids.wht_amount", "bank_free_dis")
     def _compute_amount_totals(self):
         for voucher in self:
             voucher.amount_total_gross = sum(line.amount_to_pay_gross for line in voucher.line_ids)
             voucher.amount_total_wht = sum(line.wht_amount for line in voucher.line_ids)
             voucher.amount_total_net = sum(line.amount_to_pay_net for line in voucher.line_ids)
+            voucher.amount_total_bank_fee = voucher.bank_free_dis or 0.0
 
     @api.depends('amount_total_net', 'line_ids.payment_state')
     def _compute_payment_state(self):
@@ -539,6 +546,8 @@ class AccountPaymentVoucher(models.Model):
         total_gross = sum(line.amount_to_pay_gross for line in self.line_ids)
         total_wht = sum(line.wht_amount for line in self.line_ids)
         total_net = sum(line.amount_to_pay_net for line in self.line_ids)
+        bank_fee = self.bank_free_dis or 0.0
+        total_disbursement = total_net + bank_fee
 
         # 1. Debit Line (Payable) - Aggregated
         if total_gross > 0:
@@ -591,7 +600,28 @@ class AccountPaymentVoucher(models.Model):
                 'credit': total_wht,
             })
 
-        # 3. Credit Line (Bank/Cash)
+        # 3. Debit Line (Bank Fee Expense)
+        if bank_fee > 0:
+            bank_fee_account = self.env['account.account'].search([
+                ('code', '=', '533201'),
+                ('company_id', '=', self.company_id.id)
+            ], limit=1)
+            if not bank_fee_account:
+                bank_fee_account = self.env['account.account'].search([
+                    ('account_type', '=', 'expense'),
+                    ('company_id', '=', self.company_id.id)
+                ], limit=1)
+
+            lines.append({
+                'code': bank_fee_account.code if bank_fee_account else '533201',
+                'name': bank_fee_account.name if bank_fee_account else _('Bank Fee Expense'),
+                'ref': voucher_name,
+                'date': date,
+                'debit': bank_fee,
+                'credit': 0.0,
+            })
+
+        # 4. Credit Line (Bank/Cash)
         bank_journal = self.destination_journal_id
         if bank_journal:
             # Use default account of the journal
@@ -605,7 +635,7 @@ class AccountPaymentVoucher(models.Model):
                 'ref': voucher_name,
                 'date': date,
                 'debit': 0.0,
-                'credit': total_net,
+                'credit': total_disbursement,
             })
             
         return lines

@@ -28,7 +28,7 @@ class EtaxConfig(models.Model):
                                 default=lambda self: self.env.company)
     
     # การตั้งค่า PDF
-    pdf_template_id = fields.Char('Template PDF', default='smm_T04')
+    pdf_template_id = fields.Char('Template PDF', default='MOGEN-T03')
     send_mail_ind = fields.Selection([
         ('Y', 'ส่งอีเมล'),
         ('N', 'ไม่ส่งอีเมล')

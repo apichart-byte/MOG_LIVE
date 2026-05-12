@@ -12,7 +12,7 @@
     ''',
     'author': 'BUZ Team',
     'website': 'https://www.buzteam.com',
-    'depends': ['base', 'account', 'sale'],
+    'depends': ['base', 'account', 'sale','buz_invoice_view'],
     'data': [
         'security/ir.model.access.csv',
         'data/etax_data.xml',

@@ -69,7 +69,17 @@ class DPReportWizard(models.TransientModel):
         pickings = self.env["stock.picking"].search(
             picking_domain, order="scheduled_date, name"
         )
-        return pickings.mapped("sale_id").sorted(
+        sale_orders = pickings.mapped("sale_id")
+        
+        if self.do_status == 'done':
+            return_pickings = self.env["stock.picking"].search([
+                ("sale_id", "in", sale_orders.ids),
+                ("picking_type_id.code", "=", "incoming"),
+                ("state", "!=", "cancel"),
+            ])
+            sale_orders -= return_pickings.mapped("sale_id")
+
+        return sale_orders.sorted(
             lambda order: (order.date_order or fields.Datetime.now(), order.name or "")
         )
 

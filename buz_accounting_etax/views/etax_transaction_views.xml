@@ -28,8 +28,25 @@
                         <group>
                             <field name="document_type" readonly="state == 'sent'"/>
                             <field name="etax_config_id" readonly="state == 'sent'"/>
-                            <field name="sale_order_ref" readonly="state == 'sent'"/>
-                            
+                            <field name="sale_order_ref" placeholder="Select a sale order..." readonly="state == 'sent'"/>
+
+                            <field name="invoice_ids" invisible="1"/>
+                            <field name="selected_invoice_id" 
+                                options="{'no_create': True, 'no_open': True}"
+                                placeholder="Select an invoice..."
+                                domain="[('id', 'in', invoice_ids)]"
+                                readonly="state == 'sent' or document_type == 'T04' or document_type == 'T03'"/>
+
+                             <field name="delivery_ids" invisible="1"/>
+                        
+                            <!-- ฟิลด์ Dropdown สำหรับเลือก Invoice -->
+                            <field name="selected_delivery_id" 
+                                options="{'no_create': True, 'no_open': True}"
+                                placeholder="Select a delivery..."
+                                domain="[('id', 'in', delivery_ids)]"
+                                readonly="state == 'sent'"/>
+
+                            <!-- <field name="journal_entry_memo" readonly="state == 'sent'"/> -->
                             <field name="document_date" readonly="state == 'sent'"/>
                             <field name="payment_term" style="width:50px;" readonly="state == 'sent'"/>
                             <field name="payment_due_date" readonly="state == 'sent'"/>
@@ -54,6 +71,8 @@
                                     <field name="discount"/>
                                     <field name="tax_ids" widget="many2many_tags"/>
                                     <field name="price_subtotal"/>
+                                    <!-- <field name="service_policy"/>
+                                    <field name="invoice_policy"/> -->
                                 </tree>
                             </field>
                             <div invisible="not (document_type == '81' or document_type == '80')" required="document_type == '81' or document_type == '80'">
@@ -76,17 +95,13 @@
                                     <field name="net_amount_total" class="oe_subtotal_footer_range"/>
                                 </group>
                             </div>
-                            <div invisible="not (document_type == 'T04')" required="document_type == 'T04'">
+                            <div invisible="not (document_type == 'T03')" required="document_type == 'T03'">
                                 <group class="oe_subtotal_footer oe_right" readonly="state == 'sent'">
                                     <field name="amount_untaxed" 
                                         string="รวมเป็นเงิน"
-                                        invisible="not (document_type == 'T04')"/>
+                                        invisible="not (document_type == 'T03')"/>
                                     <field name="amount_disc" readonly="1"/>
-                                    <field name="net_amount" readonly="1"
-                                        string="ยอดหลังหักส่วนลด"
-                                        invisible="not (document_type == 'T04')"/>
-                                    <field name="deposit" readonly="1"/>
-                                    <field name="total_after_deposit" readonly="1"/>
+                                    <field name="total_after_deposit" string="มูลค่าที่นำมาคิดภาษี" readonly="1"/>
                                     <field name="amount_vat" readonly="1"/>
                                     <field name="net_amount_total" class="oe_subtotal_footer_range"/>
                                 </group>
