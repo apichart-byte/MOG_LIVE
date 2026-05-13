@@ -225,9 +225,9 @@
                                         <div>
                                             <strong>ที่อยู่:</strong>
                                             <span t-field="doc.partner_id.street"/>
-                                            <t t-if="doc.partner_id.city"> ตำบล<span t-field="doc.partner_id.city"/></t>
-                                            <t t-if="doc.partner_id.state_id"> อำเภอ<span t-field="doc.partner_id.state_id.name"/></t>
-                                            <t t-if="doc.partner_id.state_id"> จังหวัด<span t-field="doc.partner_id.state_id.name"/></t>
+                                            <span t-field="doc.partner_id.street2"/>
+                                            <span t-field="doc.partner_id.city"/>
+                                            <span t-field="doc.partner_id.state_id.name"/>
                                             <span t-field="doc.partner_id.zip"/>
                                         </div>
                                         <div><strong>โทรศัพท์:</strong> <span t-field="doc.partner_id.phone"/></div>
@@ -240,9 +240,9 @@
                                         <div style="margin-bottom:2px;">สถานที่ส่ง: 
                                             <span t-field="doc.partner_shipping_id.name"/>
                                             <span t-field="doc.partner_shipping_id.street"/>
-                                            <t t-if="doc.partner_shipping_id.city">ตำบล<span t-field="doc.partner_shipping_id.city"/></t>
-                                            <t t-if="doc.partner_shipping_id.state_id">อำเภอ<span t-field="doc.partner_shipping_id.state_id.name"/></t>
-                                            <t t-if="doc.partner_shipping_id.state_id">จังหวัด<span t-field="doc.partner_shipping_id.state_id.name"/></t>
+                                            <span t-field="doc.partner_shipping_id.street2"/>
+                                            <span t-field="doc.partner_shipping_id.city"/>
+                                            <span t-field="doc.partner_shipping_id.state_id.name"/>
                                             <span t-field="doc.partner_shipping_id.zip"/>
                                         </div>
 
@@ -253,7 +253,8 @@
                                             </div>
                                             <div style="width: 50%;">
                                               <strong>เลขที่ใบสั่งขาย:</strong>
-                                              <span t-esc="(doc.invoice_line_ids and doc.invoice_line_ids[0].sale_line_ids and doc.invoice_line_ids[0].sale_line_ids[0].order_id.name) or ''"/>
+                                              <t t-set="so" t-value="doc.invoice_line_ids and doc.invoice_line_ids[0].sale_line_ids and doc.invoice_line_ids[0].sale_line_ids[0].order_id"/>
+                                              <span t-esc="(so and so.client_order_ref) or (so and so.name) or ''"/>
                                             </div>
                                           </div>
                                           

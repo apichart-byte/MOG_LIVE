@@ -207,9 +207,9 @@
                                         <div>
                                             <strong>ที่อยู่:</strong>
                                             <span t-field="doc.partner_id.street"/>
-                                            <t t-if="doc.partner_id.city"> ตำบล<span t-field="doc.partner_id.city"/></t>
-                                            <t t-if="doc.partner_id.state_id"> อำเภอ<span t-field="doc.partner_id.state_id.name"/></t>
-                                            <t t-if="doc.partner_id.state_id"> จังหวัด<span t-field="doc.partner_id.state_id.name"/></t>
+                                            <span t-field="doc.partner_id.street2"/>
+                                            <span t-field="doc.partner_id.city"/>
+                                            <span t-field="doc.partner_id.state_id.name"/>
                                             <span t-field="doc.partner_id.zip"/>
                                         </div>
                                         <div><strong>โทรศัพท์:</strong> <span t-field="doc.partner_id.phone"/></div>
