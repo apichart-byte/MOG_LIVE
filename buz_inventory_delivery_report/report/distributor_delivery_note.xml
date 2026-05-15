@@ -43,7 +43,7 @@
                         }
                         .doc-title {
                             text-align: center;
-                            font-size: 22px;
+                            font-size: 28px;
                             font-weight: bold;
                             margin: 20px 0;
                         }
@@ -61,6 +61,7 @@
                     </style>
 
                     <t t-set="move_list" t-value="o.move_ids"/>
+                    <t t-set="po" t-value="o.purchase_id or (move_list.mapped('purchase_line_id.order_id') and move_list.mapped('purchase_line_id.order_id')[0]) or (move_list.mapped('origin_returned_move_id.purchase_line_id.order_id') and move_list.mapped('origin_returned_move_id.purchase_line_id.order_id')[0]) or False"/>
                     <t t-set="groups_of_10" t-value="[move_list[i:i+10] for i in range(0, len(move_list), 10)] if move_list else [[]]"/>
                     <t t-set="total_pages" t-value="len(groups_of_10)"/>
                     <t t-set="total_qty" t-value="0"/>
@@ -126,7 +127,6 @@
                                             <tr>
                                                 <td style="vertical-align: top; border: none; padding: 3px 0; text-align: right; padding-right: 15px;">Ref</td>
                                                 <td style="vertical-align: top; border: none; padding: 3px 0;">
-                                                    <t t-set="po" t-value="o.purchase_id or (o.move_ids and o.move_ids[0].purchase_line_id and o.move_ids[0].purchase_line_id.order_id) or False"/>
                                                     <t t-set="bills" t-value="po.invoice_ids.filtered(lambda i: i.state != 'cancel').mapped('name') if po else []"/>
                                                     <span t-esc="', '.join([b for b in bills if b and b != '/']) if bills and any(b != '/' for b in bills) else o.origin"/>
                                                 </td>
@@ -155,8 +155,16 @@
                                 <tbody>
                                     <t t-set="offset" t-value="(page_number - 1) * 10"/>
                                     <t t-foreach="group" t-as="move" t-index="move_index">
-                                        <!-- Calculate price_unit and amount safely -->
-                                        <t t-set="price_unit" t-value="move.purchase_line_id.price_unit if move.purchase_line_id else move.price_unit"/>
+                                        <!-- Calculate price_unit and amount safely from Return Origin or PO -->
+                                        <t t-set="orig_move" t-value="move.origin_returned_move_id"/>
+                                        <t t-set="po_line" t-value="move.purchase_line_id or (orig_move and orig_move.purchase_line_id)"/>
+                                        <t t-set="price_unit" t-value="po_line.price_unit if po_line else (orig_move.price_unit if orig_move else move.price_unit)"/>
+                                        
+                                        <t t-if="not price_unit and po">
+                                            <t t-set="fallback_line" t-value="po.order_line.filtered(lambda l: l.product_id == move.product_id)"/>
+                                            <t t-set="price_unit" t-value="fallback_line[0].price_unit if fallback_line else 0.0"/>
+                                        </t>
+                                        
                                         <t t-set="amount" t-value="price_unit * move.product_uom_qty"/>
                                         <tr style="height: 30px;">
                                             <td class="text-center"><span t-esc="offset + move_index + 1"/></td>
@@ -197,7 +205,6 @@
                                                 <div style="display: flex;">
                                                     <strong style="width: 80px; padding-left: 5px;">หมายเหตุ</strong>
                                                     <span>
-                                                        คืนของลดหนี้<br/>
                                                         <span t-field="o.note"/>
                                                     </span>
                                                 </div>
