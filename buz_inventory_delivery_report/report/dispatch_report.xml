@@ -32,21 +32,12 @@
                 <t t-set="dispatch_location_top_px" t-value="max(config.dispatch_location_top, customer_address_line2_top_px + info_line_gap_px)"/>
 
                 <t t-foreach="groups_of_10" t-as="group">
-                    <div class="page" t-attf-style="width: 216mm; height: 279mm; position: relative; font-family: {{config.font_family or 'Sarabun, sans-serif'}}; font-size: {{config.font_size or 14}}px; {{page_num != 0 and 'page-break-before: always;' or ''}} margin: 0; padding: 0; overflow: visible; box-sizing: border-box;">
+                    <div class="page" t-attf-style="width: 216mm; height: 279mm; position: relative; font-family: 'Sarabun', sans-serif; font-size: {{config.font_size or 14}}px; {{page_num != 0 and 'page-break-before: always;' or ''}} margin: 0; padding: 0; overflow: visible; box-sizing: border-box;">
                     
                     <style>
                         @font-face {
                             font-family: 'Sarabun';
-                            src: url('/buz_inventory_delivery_report/static/fonts/Sarabun-Regular.ttf') format('truetype');
-                            font-weight: normal;
-                            font-style: normal;
-                        }
-                        
-                        @font-face {
-                            font-family: 'Sarabun';
                             src: url('/buz_inventory_delivery_report/static/fonts/Sarabun-Bold.ttf') format('truetype');
-                            font-weight: bold;
-                            font-style: normal;
                         }
                         
                         @page {
@@ -76,7 +67,7 @@
                         }
                         
                         body, table, th, td, div, p, span, h1, h2, h3, h4, h5, h6 {
-                            font-family: '<t t-esc="config.font_family or 'Sarabun'"/>', sans-serif !important;
+                            font-family: 'Sarabun', sans-serif !important;
                             font-size: <t t-esc="config.font_size or 14"/>px;
                             line-height: <t t-esc="config.line_spacing or 1.2"/>;
                         }

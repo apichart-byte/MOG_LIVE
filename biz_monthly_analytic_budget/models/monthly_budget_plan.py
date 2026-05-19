@@ -8,6 +8,7 @@ from .budget_utils import (
     RESERVED_PR_STATES,
     extract_analytic_amounts,
     filter_analytic_totals_for_plan,
+    find_active_monthly_plans,
 )
 
 _logger = logging.getLogger(__name__)
@@ -650,6 +651,48 @@ class MonthlyBudgetPlan(models.Model):
                 raise ValidationError(
                     _('Total percentage of budget lines (%.2f%%) exceeds 100%%.') % total_pct
                 )
+
+    @api.constrains('state', 'budget_line_ids', 'month', 'year', 'company_id')
+    def _check_no_analytic_overlap(self):
+        """Prevent the same analytic account from being assigned to more than one
+        confirmed plan for the same month, year and company.
+
+        Rule: analytic accounts in a month must be unique across all confirmed plans
+        (each analytic belongs to exactly ONE plan per month).
+        """
+        for plan in self:
+            if plan.state != 'confirmed':
+                continue
+            if not plan.month or not plan.year:
+                continue
+
+            # Collect analytics configured on THIS plan
+            own_analytic_ids = set(plan.budget_line_ids.mapped('analytic_account_id').ids)
+            if not own_analytic_ids:
+                continue
+
+            # Find other confirmed plans in the same month/year/company
+            other_plans = find_active_monthly_plans(
+                self.env, plan.date_from, plan.company_id.id
+            ).filtered(lambda p: p.id != plan.id)
+
+            for other in other_plans:
+                other_analytic_ids = set(other.budget_line_ids.mapped('analytic_account_id').ids)
+                overlap = own_analytic_ids & other_analytic_ids
+                if overlap:
+                    overlap_names = ', '.join(
+                        self.env['account.analytic.account']
+                        .browse(list(overlap))
+                        .mapped('display_name')
+                    )
+                    raise ValidationError(_(
+                        'Analytic account(s) \"%(analytics)s\" are already configured '
+                        'in another confirmed plan for the same month (%(other_plan)s).\n'
+                        'Each analytic account must belong to only ONE confirmed plan per month.'
+                    ) % {
+                        'analytics': overlap_names,
+                        'other_plan': other.name,
+                    })
 
     # ── State actions ────────────────────────────────────────────
 
