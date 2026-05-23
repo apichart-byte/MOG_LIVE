@@ -50,27 +50,43 @@
                         <group>
                             <field name="budget_line_id" readonly="1" invisible="not budget_line_id"/>
                             <field name="budget_line_name" readonly="1"/>
+                            <field name="plan_id" readonly="1"/>
                         </group>
                         <group>
+                            <field name="amount_requested" readonly="1" string="Document Amount"/>
+                            <field name="amount_analytic" readonly="1" string="Analytic Amount"
+                                   invisible="amount_analytic == 0"/>
                             <field name="amount_limit" readonly="1"/>
                             <field name="amount_used" readonly="1"/>
                             <field name="amount_reserved" readonly="1"/>
-                            <field name="amount_requested" readonly="1"/>
                             <field name="amount_overage" readonly="1"
                                    class="text-danger fw-bold"/>
                         </group>
                     </group>
-                    <group string="Reason">
-                        <field name="reason" nolabel="1"
-                               placeholder="ระบุเหตุผลในการขอเพิ่มงบประมาณชั่วคราว..."
-                               readonly="state != 'pending'"/>
-                    </group>
-                    <group string="Approver Note">
-                        <field name="note" nolabel="1"
-                               placeholder="ระบุเหตุผลในการอนุมัติ หรือปฏิเสธ..."
-                               readonly="state != 'pending'"/>
-                        <field name="approver_id" readonly="1" invisible="state == 'pending'"/>
-                        <field name="approved_date" readonly="1" invisible="state == 'pending'"/>
+                    <separator string="Reason"/>
+                    <div class="o_form_label" style="font-weight: 600; margin-bottom: 8px;">
+                        Reason
+                    </div>
+                    <field name="reason"
+                           nolabel="1"
+                           placeholder="ระบุเหตุผลในการขอเพิ่มงบประมาณชั่วคราว..."
+                           readonly="state != 'pending'"
+                           class="w-100"
+                           style="min-height: 120px; white-space: pre-wrap;"/>
+
+                    <separator string="Approver Note"/>
+                    <div class="o_form_label" style="font-weight: 600; margin-bottom: 8px; margin-top: 24px;">
+                        Approver Note
+                    </div>
+                    <field name="note"
+                           nolabel="1"
+                           placeholder="ระบุเหตุผลในการอนุมัติ หรือปฏิเสธ..."
+                           readonly="state == 'pending'"
+                           class="w-100"
+                           style="min-height: 120px; white-space: pre-wrap;"/>
+                    <group col="2" invisible="state == 'pending'">
+                        <field name="approver_id" readonly="1"/>
+                        <field name="approved_date" readonly="1"/>
                     </group>
                 </sheet>
                 <div class="oe_chatter">
@@ -93,7 +109,7 @@
                 <field name="document_type"/>
                 <field name="document_ref" string="Document"/>
                 <field name="budget_line_name" string="Budget Area"/>
-                <field name="amount_limit" string="Limit"/>
+                <field name="amount_requested" string="Doc Amount"/>
                 <field name="amount_overage" string="Over by"/>
                 <field name="requester_id"/>
                 <field name="create_date" string="Requested On"/>

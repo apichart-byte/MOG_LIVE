@@ -125,7 +125,51 @@ class AccountMove(models.Model):
                     for po in source_po:
                         if po.state in ('purchase', 'done'):
                             po._consume_monthly_analytic_budget()
+        # Sync bill due date back to PO and PR when user changes it on the bill
+        if 'invoice_date_due' in vals and not self.env.context.get('skip_expected_payment_sync'):
+            for move in self:
+                move._sync_due_date_to_source_documents()
+        # Recompute existing approval requests when bill lines or dates change
+        _approval_trigger_fields = {
+            'invoice_line_ids', 'line_ids', 'invoice_date_due',
+            'invoice_date', 'date',
+        }
+        if _approval_trigger_fields & set(vals.keys()) and not self.env.context.get('skip_approval_recompute'):
+            for move in self:
+                if move.move_type in ('in_invoice', 'in_refund'):
+                    move._recompute_budget_approval_request()
         return result
+
+    def _sync_due_date_to_source_documents(self):
+        """Sync bill invoice_date_due back to PO expected payment and PR expected payment."""
+        self.ensure_one()
+        if self.move_type not in ('in_invoice', 'in_refund'):
+            return
+        if not self.invoice_date_due:
+            return
+        # Sync back to PO
+        source_pos = self._get_related_purchase_order()
+        for po in source_pos:
+            if po.payment_date != self.invoice_date_due:
+                po.sudo().with_context(skip_expected_payment_sync=True).write({
+                    'payment_date': self.invoice_date_due,
+                    'payment_date_manual': self.invoice_date_due,
+                })
+                # Re-reserve/re-consume PO budget with new date
+                if po.state in ('draft', 'sent', 'to approve'):
+                    po._reserve_monthly_budget_for_direct_rfq()
+                elif po.state in ('purchase', 'done'):
+                    po._consume_monthly_analytic_budget()
+                # PO will sync to PR via its own _sync_payment_date_bidirectional
+                # but since we use skip_expected_payment_sync context, do it here
+                source_pr = po._get_source_requisition()
+                if source_pr and source_pr.payment_date != self.invoice_date_due:
+                    source_pr.sudo().with_context(skip_expected_payment_sync=True).write({
+                        'payment_date': self.invoice_date_due,
+                        'payment_date_manual': self.invoice_date_due,
+                    })
+                    if source_pr.state in RESERVED_PR_STATES:
+                        source_pr._reserve_monthly_analytic_budget()
 
     def action_post(self):
         """Post vendor bills without monthly budget enforcement."""
@@ -468,3 +512,38 @@ class AccountMove(models.Model):
 
     def _check_monthly_analytic_budget_limit(self):
         return True
+
+    def _recompute_budget_approval_request(self):
+        """Recompute amounts on existing pending/approved budget approval requests
+        when the Bill is modified. Also recompute linked PO and PR requests."""
+        self.ensure_one()
+        ApprovalReq = self.env['buz.monthly.budget.approval.request'].sudo()
+
+        requests = ApprovalReq.search([
+            ('document_type', '=', 'bill'),
+            ('ref_bill_id', '=', self.id),
+            ('state', 'in', ('pending', 'approved')),
+        ])
+
+        source_pos = self._get_related_purchase_order()
+        for po in source_pos:
+            requests |= ApprovalReq.search([
+                ('document_type', '=', 'po'),
+                ('ref_po_id', '=', po.id),
+                ('state', 'in', ('pending', 'approved')),
+            ])
+            source_pr = po._get_source_requisition()
+            if source_pr:
+                requests |= ApprovalReq.search([
+                    ('document_type', '=', 'pr'),
+                    ('ref_pr_id', '=', source_pr.id),
+                    ('state', 'in', ('pending', 'approved')),
+                ])
+
+        if not requests:
+            return
+
+        affected_plans = requests._refresh_amounts_from_source_document()
+        if affected_plans:
+            for plan in self.env['monthly.budget.plan'].browse(list(affected_plans)):
+                plan._refresh_budget_snapshot(refresh_report=False)

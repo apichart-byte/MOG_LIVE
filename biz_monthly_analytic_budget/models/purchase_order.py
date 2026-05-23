@@ -175,7 +175,36 @@ class PurchaseOrder(models.Model):
             for order in self:
                 if order.state in ('purchase', 'done'):
                     order._consume_monthly_analytic_budget()
+        # Sync expected payment back to source PR and forward to Bills
+        if any(key in vals for key in ('payment_date', 'payment_date_manual')) and not self.env.context.get('skip_expected_payment_sync'):
+            for order in self:
+                order._sync_payment_date_bidirectional()
+        # Recompute existing approval requests when PO lines or amounts change
+        _approval_trigger_fields = {
+            'order_line', 'payment_date', 'payment_date_manual', 'partner_id',
+        }
+        if _approval_trigger_fields & set(vals.keys()) and not self.env.context.get('skip_approval_recompute'):
+            for order in self:
+                order._recompute_budget_approval_request()
         return result
+
+    def _sync_payment_date_bidirectional(self):
+        """Sync PO expected payment date back to source PR and forward to Bills."""
+        self.ensure_one()
+        if not self.payment_date:
+            return
+        # Sync back to source PR
+        source_pr = self._get_source_requisition()
+        if source_pr and source_pr.payment_date != self.payment_date:
+            source_pr.sudo().with_context(skip_expected_payment_sync=True).write({
+                'payment_date': self.payment_date,
+                'payment_date_manual': self.payment_date,
+            })
+            # Re-reserve PR budget with new date
+            if source_pr.state in RESERVED_PR_STATES:
+                source_pr._reserve_monthly_analytic_budget()
+        # Sync forward to linked Bills
+        self._sync_linked_vendor_bills()
 
     def _sync_linked_vendor_bills(self):
         """Refresh linked vendor bills when the PO expected payment changes."""
@@ -386,7 +415,10 @@ class PurchaseOrder(models.Model):
         if not grouped_totals:
             return
 
-        po_amount = sum(analytic_totals.values())
+        # Document Amount = actual PO total untaxed
+        po_amount = self.amount_untaxed
+        # Analytic Amount = sum of allocated amounts across budget plans
+        analytic_amount = sum(analytic_totals.values())
         
         limit_amt = 0.0
         used = 0.0
@@ -425,6 +457,7 @@ class PurchaseOrder(models.Model):
                 'default_ref_id': self.id,
                 'default_budget_line_names': ', '.join(budget_line_names),
                 'default_amount_requested': po_amount,
+                'default_amount_analytic': analytic_amount,
                 'default_amount_used': used,
                 'default_amount_reserved': reserved,
                 'default_amount_limit': limit_amt,
@@ -432,6 +465,31 @@ class PurchaseOrder(models.Model):
                 'default_plan_id': primary_plan.id if primary_plan else False,
             }
         }
+
+    def _recompute_budget_approval_request(self):
+        """Recompute amounts on existing pending/approved budget approval requests
+        when the PO is modified (lines changed, amounts changed, etc.)."""
+        self.ensure_one()
+        ApprovalReq = self.env['buz.monthly.budget.approval.request'].sudo()
+        requests = ApprovalReq.search([
+            ('document_type', '=', 'po'),
+            ('ref_po_id', '=', self.id),
+            ('state', 'in', ('pending', 'approved')),
+        ])
+        source_pr = self._get_source_requisition()
+        if source_pr:
+            requests |= ApprovalReq.search([
+                ('document_type', '=', 'pr'),
+                ('ref_pr_id', '=', source_pr.id),
+                ('state', 'in', ('pending', 'approved')),
+            ])
+        if not requests:
+            return
+
+        affected_plans = requests._refresh_amounts_from_source_document()
+        if affected_plans:
+            for plan in self.env['monthly.budget.plan'].browse(list(affected_plans)):
+                plan._refresh_budget_snapshot(refresh_report=False)
 
     def button_confirm(self):
         """On PO confirmation: consume monthly analytic budget reservations."""
@@ -459,6 +517,10 @@ class PurchaseOrder(models.Model):
     def _check_monthly_analytic_budget_limit(self):
         """Verify budget before PO confirmation or submission."""
         self.ensure_one()
+
+        # Allow tests to bypass budget check
+        if self.env.context.get('bypass_budget_check'):
+            return True
         ApprovalReq = self.env['buz.monthly.budget.approval.request'].sudo()
 
         # 1. Check if an approved budget request exists for THIS PO

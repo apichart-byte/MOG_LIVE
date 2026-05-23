@@ -195,6 +195,13 @@
                             <div style="width: 50%; text-align: left;margin-top: 40px;">
                                 <strong style="width: auto; display: inline-block;"></strong>
                                 <span t-field="doc.invoice_origin"/>
+                                <t t-if="doc.picking_ids">
+                                    <t t-set="picking_size" t-value="len(doc.picking_ids)"/>
+                                    <t t-foreach="doc.picking_ids" t-as="picking">
+                                        <span t-field="picking.name"/>
+                                        <t t-if="picking_index + 1 &lt; picking_size">, </t>
+                                    </t>
+                                </t>
                             </div>
                         
                             <!-- ฝั่งขวา: เลขที่เอกสาร + วันที่ -->
@@ -270,7 +277,7 @@
                                         <div style="display: flex; justify-content: space-between; margin-top: 2px; margin-bottom:2px;">
                                             <div style="width: 65%;">
                                                 <strong>วันครบกำหนด:</strong>
-                                                <span t-field="doc.invoice_date" t-options='{"format": "dd/MM/yyyy"}'/>
+                                                <span t-field="doc.invoice_date_due" t-options='{"format": "dd/MM/yyyy"}'/>
                                             </div>
                                             <div style="width: 35%;">
                                                 <strong>Credit:</strong>
@@ -352,17 +359,19 @@
                                     <tr>
                                         <td colspan="4" style="text-align: left; border-top: 1px solid #000; line-height: 1;  vertical-align: top; padding: 0;">
                                             <!-- ส่วนบน -->
-                                            <div style="min-height: 135px; line-height: 0.8; margin-top: 10px; max-height: 120px; height: 135px; padding: 10px; box-sizing: border-box; border-bottom: 1.5px solid #000;">
-                                                <div style="line-height: 1; font-size: 15px;">
-                                                    <strong style="font-size: 18px;">หมายเหตุ ผิด ตก ยกเว้น E. &amp; O.E.</strong>
-                                                    <div style="margin-bottom: 1.8px;">* กรุณาตรวจสอบสินค้าที่ได้รับอยู่ในสภาพเรียบร้อยและมีจำนวนถูกต้องตามรายการข้างต้น ก่อนลงลายมือชื่อ เพื่อรับสินค้า</div>
-                                                    <div style="margin-bottom: 1.8px;">* หากสินค้าเสียหายหรือมีความผิดผลาด โปรดแจ้งบริษัทฯ ภายใน 7 วัน มิฉะนั้น บริษัทจะไม่รับผิดชอบความเสียหายที่เกิดขึ้น</div>
-                                                    <div style="margin-bottom: 1.8px;">* หากชำระเงินแล้ว ต้องมีลายเซนต์ผู้รับเงินจึงจะถูกต้องสมบูรณ์</div>
-                                                    <div style="margin-bottom: 1.8px;">* ใบกำกับภาษี/ใบเสร็จรับเงิน หากไม่ถูกต้องโปรดแจ้งภายใน 7 วัน มิฉะนั้นจะถือว่าสมบูรณ์</div>
+                                            <div style="min-height: 145px; height: 145px; margin-top: 10px; padding: 8px 10px; box-sizing: border-box; border-bottom: 1.5px solid #000;">
+                                                <div style="line-height: 1.25; font-size: 12px;">
+                                                    <strong style="font-size: 14px;">หมายเหตุ ผิด ตก ยกเว้น E. &amp; O.E.</strong>
+                                                    <div style="margin-bottom: 1.7px;">* หากพ้นกำหนดเป็นเวลา 7 วัน นับจากวันที่ในเอกสารฉบับนี้ ทางบริษัทฯ ขอสงวนสิทธิ์ในการเปลี่นแปลงหรือแก้ไข</div>
+                                                    <div style="margin-bottom: 1.7px;">* กรุณาตรวจสอบสินค้าที่ได้รับอยู่ในสภาพเรียบร้อยและมีจำนวนถูกต้องตามรายการข้างต้น ก่อนลงมือชื่อ เพื่อรับสินค้า</div>
+                                                    <div style="margin-bottom: 1.7px;">* หากสินค้าเสียหายหรือมีความผิดผลาด โปรดแจ้งบริษัทฯ ภายใน 7 วัน มิฉะนั้นบริษัทฯ จะไม่รับผิดชอบความเสียหายที่เกิดขึ้น</div>
+                                                    <div style="margin-bottom: 1.7px;">* หากชำระเงินแล้ว ต้องมีลายเซนต์ผู้รับเงินจึงจะถูกต้องสมบูรณ์</div>
+                                                    <div style="margin-bottom: 1.7px;">* กรณีชำระด้วยเช็ค ใบเสร็จรับเงินจะถือว่าถูกต้องและสมบูรณ์ต่อเมื่อบริษัทฯ ได้เรียกเก็บตามเช็คเรียบร้อยแล้ว</div>
+                                                    <div style="margin-bottom: 1.7px;">* ในกรณีที่ผิดชำระหนี้ ทางบริษัทฯ จะคิดดอกเบี้ย ในอัตราร้อยล่ะ 1.25 ต่อเดือน ของยอดหนี้ค่าสินค้า</div>
                                                 </div>
                                             </div>
                                             <!-- ส่วนล่าง -->
-                                            <div style="min-height: 35px; height: 45px; padding: 10px; box-sizing: border-box;font-size: 20px;">
+                                            <div style="min-height: 35px; height: 35px; padding: 5px 10px; box-sizing: border-box; font-size: 18px; line-height: 1.2;">
                                                 <strong>จำนวนเงิน (ตัวอักษร):</strong>
                                                 <span t-esc="doc.amount_total_text_th"/>
                                             </div>

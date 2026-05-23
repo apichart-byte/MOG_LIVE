@@ -201,7 +201,7 @@
                             <div style="display: table-row;">
                                 <!-- ซ้าย -->
                                 <div style="display: table-cell; width: 50%; vertical-align: top; padding-right: 5px;">
-                                    <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; height: 100%; box-sizing: border-box;">
+                                    <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; height: 192px; box-sizing: border-box;">
                                         <div><strong>ชื่อลูกค้า:</strong> <span t-field="doc.partner_id.name"/> <span t-field="doc.partner_id.branch"/></div>
                                         <div><strong>เลขประจำตัวผู้เสียภาษี:</strong> <span t-field="doc.partner_id.vat"/></div>
                                         <div>
@@ -218,7 +218,7 @@
 
                                 <!-- ขวา -->
                                 <div style="display: table-cell; width: 50%; vertical-align: top; padding-left: 5px;">
-                                    <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; height: 100%; box-sizing: border-box;">
+                                    <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; height: 192px; box-sizing: border-box;">
 
                                         <!-- แก้ไขตรงนี้ -->
                                         <div style="display: flex; justify-content: space-between; margin-top: 10px;">
@@ -236,14 +236,11 @@
                                         <div style="display: flex; justify-content: space-between; margin-top: 10px;">
                                             <div style="width: 65%;">
                                                 <strong>เลขที่ใบส่งคืนสินค้า:</strong>
-                                                <span t-if="doc.delivery_note" t-field="doc.delivery_note"/>
-                                                <t t-else="">
-                                                    <t t-if="doc.picking_ids">
-                                                        <t t-set="picking_size" t-value="len(doc.picking_ids)"/>
-                                                        <t t-foreach="doc.picking_ids" t-as="picking">
-                                                            <span t-field="picking.name"/>
-                                                            <t t-if="picking_index + 1 &lt; picking_size">, </t>
-                                                        </t>
+                                                <t t-if="doc.picking_ids">
+                                                    <t t-set="picking_size" t-value="len(doc.picking_ids)"/>
+                                                    <t t-foreach="doc.picking_ids" t-as="picking">
+                                                        <span t-field="picking.name"/>
+                                                        <t t-if="picking_index + 1 &lt; picking_size">, </t>
                                                     </t>
                                                 </t>
                                             </div>
