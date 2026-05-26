@@ -262,19 +262,34 @@
     </div>
 
 
-    <!-- Signature Section -->
-        <div class="signature-section" style="margin-top: 30px; text-align: right; margin-right: 20px;">
-            <div style="width: 200px; display: inline-block; text-align: center; margin-left: 600px;">
-                <p style="margin-bottom: 40px;font-size: 20px;color:#000000">ผู้อนุมัติซื้อ</p>
-                <div style="border-bottom: 1px dashed #000; width: 100%;"></div>
-                <div style="margin-top: 10px; font-size: 16px;color:#000000">
-                    (______________________________)
-                </div>
-                <div style="margin-top: 5px; font-size: 16px;color:#000000">
-                    วันที่ .................................
-                </div>
-            </div>
+   <!-- Signature Section -->
+<div class="row" style="margin-top: 80px; font-size: 20px; margin-left: -70px; margin-right: -70px;">
+    <!-- Left: ผู้อำนาจสั่งซื้อ -->
+    <div class="col-6" style="text-align: center; padding: 0 5px;">
+        <p style="margin-bottom: 5px; color: #000;">ผู้อำนาจสั่งซื้อ</p>
+        <p style="margin-bottom: 20px; color: #000; font-size: 16px;">(AUTHORIZED SIGNATURE TO ORDER)</p>
+        <div style="border-bottom: 1px dashed #000; width: 50%; margin: 0 auto;"></div>
+        <div style="margin-top: 5px; font-size: 16px;">
+            (______________________________)
         </div>
+        <div style="margin-top: 3px; font-size: 16px; color: #000;">
+            วันที่ .................................
+        </div>
+    </div>
+    <!-- Right: ผู้มีอำนาจเสนอขาย -->
+    <div class="col-6" style="text-align: center; padding: 0 5px;">
+        <p style="margin-bottom: 5px; color: #000;">ผู้มีอำนาจเสนอขาย</p>
+        <p style="margin-bottom: 20px; color: #000; font-size: 16px;">(AUTHORIZED SIGNATURE OF THE SELLER)</p>
+        <div style="border-bottom: 1px dashed #000; width: 50%; margin: 0 auto;"></div>
+        <div style="margin-top: 5px; font-size: 16px;">
+            (รณภพ เตชะวิวัฒน์วงศ์)
+        </div>
+        <div style="margin-top: 3px; font-size: 16px; color: #000;">
+            วันที่ .................................
+        </div>
+    </div>
+</div>
+
         
  <!-- Replace the existing Terms and Conditions section with: -->
  <div class="row mb-4" style="font-size: 20px; margin: 20px 15px; padding: 20px; background-color: #f5f5f5; border-radius: 10px;">
