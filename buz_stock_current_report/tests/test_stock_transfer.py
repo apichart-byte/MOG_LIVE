@@ -10,7 +10,8 @@ class TestStockCurrentTransfer(common.TransactionCase):
         # Create test data
         self.warehouse = self.env['stock.warehouse'].create({
             'name': 'Test Warehouse',
-            'code': 'TW'
+            'code': 'TW',
+            'manufacture_steps': 'mrp_one_step',
         })
         
         self.location_src = self.warehouse.lot_stock_id
@@ -57,7 +58,7 @@ class TestStockCurrentTransfer(common.TransactionCase):
         product_data = [{
             'productId': self.product.id,
             'locationId': self.location_src.id,
-            'quantity': 150,  # More than available
+            'quantity': 50,
             'uomId': self.product.uom_id.id,
             'productName': self.product.name,
             'locationName': self.location_src.name
@@ -67,9 +68,11 @@ class TestStockCurrentTransfer(common.TransactionCase):
             default_selected_products=product_data
         ).create({})
         
-        # Should raise validation error when trying to transfer more than available
+        # Bypass the auto-capped default_get: write a quantity exceeding available stock
+        line = wizard.line_ids[0]
+        # Writing quantity_to_transfer > available_quantity triggers _check_quantity constraint
         with self.assertRaises(ValidationError):
-            wizard.action_create_transfer()
+            line.write({'quantity_to_transfer': 150})
 
     def test_transfer_creation(self):
         """Test actual transfer creation"""

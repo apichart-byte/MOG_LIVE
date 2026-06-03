@@ -50,25 +50,29 @@ class DispatchReportPDF(models.AbstractModel):
                     if getattr(move, 'sale_line_id', False) and move.sale_line_id:
                         group_key = f"sale_{move.sale_line_id.id}"
                         kit_product = move.sale_line_id.product_id
-                        kit_qty = move.sale_line_id.product_uom_qty
                         kit_uom = move.sale_line_id.product_uom.name
                         sale_line = move.sale_line_id
                     else:
                         group_key = f"bom_{move.bom_line_id.bom_id.id}"
                         kit_product = move.bom_line_id.bom_id.product_tmpl_id
-                        kit_qty = 0
                         kit_uom = kit_product.uom_id.name
                         sale_line = None
 
                     if group_key not in bom_grouped:
                         bom_grouped[group_key] = {
                             'product': kit_product,
-                            'qty': kit_qty,
+                            'qty': 0.0,
                             'uom': kit_uom,
                             'moves': [],
                             'sale_line_id': sale_line,
                         }
                     bom_grouped[group_key]['moves'].append(move)
+                    # Set kit qty from the first component move only
+                    # (all components of the same kit share the same kit qty)
+                    if bom_grouped[group_key]['qty'] == 0:
+                        bl = move.bom_line_id
+                        if bl and bl.product_qty:
+                            bom_grouped[group_key]['qty'] = move.product_uom_qty / bl.product_qty
                 else:
                     normal_lines.append(move)
             
