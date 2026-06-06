@@ -453,7 +453,7 @@ class EtaxTransaction(models.Model):
                 "B02-BUYER_NAME": self.partner_id.name[:100], # ผู้ซื้อ
                 "B03-BUYER_TAX_ID_TYPE": "OTHR" if not self.partner_id.vat or self.partner_id.vat == 'N/A' else "TXID",
                 "B04-BUYER_TAX_ID": self.partner_id.vat or "N/A", # เลขประจำตัวผู้เสียภาษีอากร
-                "B05-BUYER_BRANCH_ID": self.partner_id.branch or '00000', #self.partner_branch_id, # รหัสสาขาผู้ซื้อ
+                "B05-BUYER_BRANCH_ID": (self.partner_id.branch or "")[:5] if self.partner_id.branch else '00000', #self.partner_branch_id, # รหัสสาขาผู้ซื้อ
                 "B06-BUYER_CONTACT_PERSON_NAME": "",
                 "B07-BUYER_CONTACT_DEPARTMENT_NAME": "",
                 "B08-BUYER_URIID": self.partner_id.email or "",
@@ -808,10 +808,13 @@ class EtaxTransaction(models.Model):
 
             record.amount_total = (total or 0.0) + (record.amount_tax or 0.0)
 
-    @api.depends('total_after_deposit', 'amount_vat')
+    @api.depends('invoice_id.amount_total', 'total_after_deposit', 'amount_vat')
     def _compute_net_amount_total(self):
         for record in self:
-            record.net_amount_total = (record.total_after_deposit or 0.0) + (record.amount_vat or 0.0)
+            if record.invoice_id:
+                record.net_amount_total = record.invoice_id.amount_total
+            else:
+                record.net_amount_total = round((record.total_after_deposit or 0.0) + (record.amount_vat or 0.0), 2)
 
     @api.depends('invoice_id.amount_untaxed')
     def _compute_original_amount(self):
@@ -822,12 +825,13 @@ class EtaxTransaction(models.Model):
     @api.depends('line_ids.price_unit', 'line_ids.quantity', 'line_ids.discount')
     def _compute_amount_disc(self):
         for record in self:
-            total_disc = 0.0
-            for line in record.line_ids:
-                # discount เป็นเปอร์เซ็นต์ เช่น 10 หมายถึง 10%
-                line_disc = (line.price_unit * line.quantity) * (line.discount / 100.0)
-                total_disc += line_disc
-            record.amount_disc = total_disc
+            # total_disc = 0.0
+            # for line in record.line_ids:
+            #     # discount เป็นเปอร์เซ็นต์ เช่น 10 หมายถึง 10%
+            #     line_disc = (line.price_unit * line.quantity) * (line.discount / 100.0)
+            #     total_disc += line_disc
+            # record.amount_disc = total_disc
+            record.amount_disc = 0 #WK#1.n 20260624
 
     @api.depends('amount_untaxed', 'amount_disc')
     def _compute_net_amount(self):
