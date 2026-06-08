@@ -1,6 +1,6 @@
 {
     "name": "buz Sales Target Management",
-    "version": "17.0.1.0.0",
+    "version": "17.0.1.1.0",
     "summary": "Sales target management for salespersons and teams with advanced features.",
     "description": """
         Sales Target Management
@@ -19,21 +19,22 @@
         - Real-time achievement tracking
     """,
     "category": "Sales",
-    "author": "Your Company",
-    "website": "https://yourcompany.com",
+    "author": "Mogen Co., Ltd.",
+    "website": "https://mogen.co.th",
     "depends": ["sale_management", "crm", "account"],
     "data": [
         "security/security.xml",
         "security/ir.model.access.csv",
         "data/email_templates.xml",
+        "data/cron_data.xml",
         "views/sales_target_views.xml",
+        "views/my_target_dashboard.xml",
+        "views/crm_team_dashboard.xml",
         "views/sales_target_menu.xml",
-        "views/sales_target_dashboard_new.xml"
     ],
     "assets": {
         "web.assets_backend": [
-            "sales_target_custom/static/src/css/dashboard.css",
-            "sales_target_custom/static/src/js/gauge_chart.js",
+            "sales_target_custom/static/src/scss/dashboard.scss",
         ],
     },
     "installable": True,

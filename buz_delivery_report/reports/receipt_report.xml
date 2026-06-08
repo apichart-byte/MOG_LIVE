@@ -170,7 +170,7 @@
                 <div class="col-6">
                     <div class="info-box" style="height: 200px;">
                         <div class="mb-2">
-                            <strong style="width: 20%; display: inline-block;">วันที่เอกสาร:</strong>
+                            <strong style="width: 20%; display: inline-block;">วันที่ Effective Date:</strong>
                             <span t-field="doc.date" t-options='{"widget": "date"}'/>
                             <span class="ml-4">
                                 <strong style="width: 20%; display: inline-block;">วันที่จัดส่ง:</strong>
@@ -253,7 +253,11 @@
                 sum(ml.quantity for ml in move.move_line_ids) * (move.purchase_line_id.price_unit or 0.0)
                 for move in doc.move_ids_without_package
             )"/>
-            <t t-set="vat_amount" t-value="subtotal * 0.07"/>
+            <t t-set="has_vat" t-value="doc.purchase_id and any(
+                line.taxes_id
+                for line in doc.purchase_id.order_line
+            )"/>
+            <t t-set="vat_amount" t-value="has_vat and subtotal * 0.07 or 0.0"/>
             <t t-set="total_amount" t-value="subtotal + vat_amount"/>
             <div class="row mt-3" style="display: flex; align-items: stretch;">
                 <!-- Left: Note + Amount in Text -->
@@ -271,7 +275,7 @@
                         <div class="row mt-3">
                             <div class="col-12">
                                 <strong>(</strong>
-                                <span t-esc="doc.amount_to_text_th(total_amount)"/>
+                                <span t-esc="doc.amount_to_text_th(has_vat and total_amount or subtotal)"/>
                                 <strong>)</strong>
                             </div>
                         </div>
@@ -288,7 +292,7 @@
                                 <span t-esc="subtotal" t-options='{"widget": "monetary", "display_currency": doc.company_id.currency_id}'/>
                             </div>
                         </div>
-                        <div class="row">
+                        <div class="row" t-if="has_vat">
                             <div class="col-6">
                                 <strong>ภาษีมูลค่าเพิ่ม / VAT 7%:</strong>
                             </div>

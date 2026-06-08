@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_service_receipt_root"
+              name="After_Service"
+              sequence="30"
+              web_icon="buz_service_receipt,static/description/icon.png"
+              groups="buz_service_receipt.group_service_receipt_user"/>
+
+    <menuitem id="menu_service_receipt"
+              name="Service Receipts"
+              parent="menu_service_receipt_root"
+              sequence="10"
+              action="action_service_receipt"/>
+
+    <menuitem id="menu_service_receipt_calendar"
+              name="Service Schedule"
+              parent="menu_service_receipt_root"
+              sequence="20"
+              action="action_service_receipt_calendar"/>
+
+    <menuitem id="menu_service_team"
+              name="Service Teams"
+              parent="menu_service_receipt_root"
+              sequence="30"
+              action="action_service_team"
+              groups="buz_service_receipt.group_service_receipt_manager"/>
+</odoo>

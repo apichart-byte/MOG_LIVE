@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="paperformat_service_receipt" model="report.paperformat">
+        <field name="name">Service Receipt A4</field>
+        <field name="default" eval="False"/>
+        <field name="format">A4</field>
+        <field name="orientation">Portrait</field>
+        <field name="margin_top">6</field>
+        <field name="margin_bottom">8</field>
+        <field name="margin_left">6</field>
+        <field name="margin_right">6</field>
+        <field name="header_line" eval="False"/>
+        <field name="header_spacing">0</field>
+        <field name="dpi">90</field>
+    </record>
+
+    <record id="action_report_service_receipt" model="ir.actions.report">
+        <field name="name">Service Receipt</field>
+        <field name="model">service.receipt</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">buz_service_receipt.report_service_receipt_document</field>
+        <field name="report_file">buz_service_receipt.report_service_receipt_document</field>
+        <field name="binding_model_id" ref="model_service_receipt"/>
+        <field name="binding_type">report</field>
+        <field name="paperformat_id" ref="paperformat_service_receipt"/>
+    </record>
+
+    <template id="report_service_receipt_document">
+        <t t-name="buz_service_receipt.report_service_receipt_document">
+            <t t-call="web.html_container">
+                <t t-foreach="docs" t-as="o">
+                    <t t-call="web.basic_layout">
+                        <div class="page sr-page">
+                            <style>
+                                @font-face {
+                                    font-family: 'Sarabun';
+                                    src: url('/buz_service_receipt/static/fonts/Sarabun-Regular.ttf') format('truetype');
+                                    font-weight: 400;
+                                }
+                                @font-face {
+                                    font-family: 'Sarabun';
+                                    src: url('/buz_service_receipt/static/fonts/Sarabun-Bold.ttf') format('truetype');
+                                    font-weight: 700;
+                                }
+                                .sr-page {
+                                    font-family: 'Sarabun', sans-serif !important;
+                                    color: #000;
+                                    font-size: 23px;
+                                    line-height: 1.18;
+                                    box-sizing: border-box;
+                                }
+                                .sr-page * {
+                                    font-family: 'Sarabun', sans-serif !important;
+                                    color: #000;
+                                    line-height: 1.18;
+                                    box-sizing: border-box;
+                                }
+                                .sr-page {
+                                    position: relative;
+                                    min-height: 282mm;
+                                    padding: 0 2mm;
+                                }
+                                .sr-grid-bg {
+                                    position: absolute;
+                                    inset: 0 2mm;
+                                    z-index: 0;
+                                    background-image:
+                                        linear-gradient(#c7c7c7 1px, transparent 1px),
+                                        linear-gradient(90deg, #c7c7c7 1px, transparent 1px);
+                                    background-size: 100% 8.7mm, 18.2mm 100%;
+                                }
+                                .sr-content {
+                                    position: relative;
+                                    z-index: 1;
+                                }
+                                .sr-head {
+                                    width: 100%;
+                                    border-collapse: collapse;
+                                }
+                                .sr-head td {
+                                    vertical-align: top;
+                                    padding: 0 2px;
+                                }
+                                .sr-company {
+                                    width: 76%;
+                                    font-weight: 700;
+                                }
+                                .sr-company div {
+                                    font-size: 20px;
+                                    white-space: nowrap;
+                                }
+                                .sr-logo {
+                                    width: 24%;
+                                    text-align: right;
+                                    padding-top: 4px !important;
+                                }
+                                .sr-logo img {
+                                    max-height: 16mm;
+                                }
+                                .sr-docno {
+                                    text-align: right;
+                                    font-weight: 700;
+                                    padding-top: 4px !important;
+                                    white-space: nowrap;
+                                }
+                                .sr-title {
+                                    text-align: center;
+                                    font-size: 29px;
+                                    font-weight: 700;
+                                    line-height: 1;
+                                    margin: 1mm 0 2mm;
+                                }
+                                .sr-table {
+                                    width: 100%;
+                                    border-collapse: collapse;
+                                    table-layout: fixed;
+                                }
+                                .sr-table th,
+                                .sr-table td {
+                                    border: 1px solid #000;
+                                    padding: 2px 4px;
+                                    vertical-align: top;
+                                }
+                                .sr-table th {
+                                    text-align: center;
+                                    font-weight: 700;
+                                }
+                                .sr-rowline {
+                                    width: 100%;
+                                    border-collapse: collapse;
+                                    table-layout: fixed;
+                                }
+                                .sr-rowline td {
+                                    padding: 1px 0 1px 3px;
+                                    vertical-align: bottom;
+                                    height: 7.2mm;
+                                    border: 0;
+                                }
+                                .lbl {
+                                    font-weight: 700;
+                                    white-space: nowrap;
+                                    padding-right: 4px;
+                                }
+                                .dot {
+                                    display: inline-block;
+                                    width: 100%;
+                                    min-height: 14px;
+                                    border-bottom: 2px dotted #000;
+                                    padding-left: 5px;
+                                    font-weight: 400;
+                                }
+                                .pair {
+                                    display: table;
+                                    width: 100%;
+                                }
+                                .pair .lbl,
+                                .pair .dot {
+                                    display: table-cell;
+                                }
+                                .box {
+                                    display: inline-block;
+                                    width: 13px;
+                                    height: 13px;
+                                    line-height: 12px;
+                                    margin: 0 5px 0 0;
+                                    border: 1px solid #d2d2d2;
+                                    background: #d9d9d9;
+                                    text-align: center;
+                                    font-size: 10px;
+                                    vertical-align: -1px;
+                                    color: #000;
+                                }
+                                .check-row {
+                                    width: 100%;
+                                    border-collapse: collapse;
+                                    table-layout: fixed;
+                                }
+                                .check-row td {
+                                    height: 7mm;
+                                    padding: 1px 3px;
+                                    vertical-align: middle;
+                                    font-weight: 700;
+                                    white-space: nowrap;
+                                }
+                                .section-title {
+                                    font-weight: 700;
+                                    padding: 2px 3px 0;
+                                }
+                                .sr-page .section-title-lg {
+                                    font-weight: 700;
+                                    padding: 2px 3px 0;
+                                    font-size: 20px !important;
+                                    line-height: 1.3;
+                                }
+                                .text-lines {
+                                    padding: 0 3px;
+                                    font-weight: 700;
+                                }
+                                .text-lines .dot {
+                                    height: 7.5mm;
+                                }
+                                .sign-table {
+                                    width: 100%;
+                                    border-collapse: collapse;
+                                    table-layout: fixed;
+                                    margin-top: 2mm;
+                                }
+                                .sign-table td {
+                                    height: 23mm;
+                                    padding: 3px 12px;
+                                    vertical-align: top;
+                                    font-weight: 700;
+                                }
+                                .sr-footer {
+                                    display: table;
+                                    width: 100%;
+                                    font-weight: 700;
+                                    padding-top: 10mm;
+                                }
+                                .sr-footer div {
+                                    display: table-cell;
+                                    font-size: 15px;
+                                }
+                            </style>
+
+                            <t t-set="service_hour" t-value="int(o.service_time or 0)"/>
+                            <t t-set="service_minute" t-value="int(round(((o.service_time or 0) - service_hour) * 60))"/>
+                            <t t-set="line_count" t-value="len(o.line_ids)"/>
+                            <t t-set="total_rows" t-value="max(line_count, 5)"/>
+
+                            <div class="sr-grid-bg"></div>
+                            <div class="sr-content">
+                                <table class="sr-head">
+                                    <tr>
+                                        <td class="sr-company">
+                                            <div>บริษัท โมเก้น (ประเทศไทย) จำกัด</div>
+                                            <div>9 หมู่12 ตำบลบึงคำพร้อย&#160; อำเภอลำลูกกา&#160; จังหวัดปทุมธานี 12150</div>
+                                            <div>โทร02-1509709-13&#160; โทรสาร 02-1528801&#160; E-mail : contact@mogen.co.th</div>
+                                        </td>
+                                        <td class="sr-logo">
+                                            <img src="/buz_service_receipt/static/img/LOGO_MOGEN.png"/>
+                                            <div class="sr-docno">เลขที่เอกสาร <span t-esc="o.name"/></div>
+                                        </td>
+                                    </tr>
+                                </table>
+
+                                <div class="sr-title">ใบรับบริการ</div>
+
+                                <table class="sr-rowline">
+                                    <tr>
+                                        <td style="width:56%;">
+                                            <div class="pair"><span class="lbl">ผู้แจ้ง</span><span class="dot" t-esc="o.informer_name or ''"/></div>
+                                        </td>
+                                        <td style="width:44%;">
+                                            <div class="pair"><span class="lbl">โทรศัพท์</span><span class="dot" t-esc="o.informer_phone or ''"/></div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <div class="pair"><span class="lbl">ชื่อผู้ขอรับบริการ</span><span class="dot" t-esc="o.requester_name or ''"/></div>
+                                        </td>
+                                        <td>
+                                            <div class="pair"><span class="lbl">โทรศัพท์</span><span class="dot" t-esc="o.requester_phone or ''"/></div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <div class="pair"><span class="lbl">ซื้อผ่านร้าน</span><span class="dot" t-esc="o.shop_name or ''"/></div>
+                                        </td>
+                                        <td>
+                                            <div class="pair"><span class="lbl">วันที่เข้าบริการ</span><span class="dot" t-esc="o.service_date.strftime('%d/%m/%Y') if o.service_date else ''"/></div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="2">
+                                            <div class="pair"><span class="lbl">ที่อยู่</span><span class="dot" t-esc="o.service_address or ''"/></div>
+                                        </td>
+                                    </tr>
+                                </table>
+
+                                <table class="sr-table" style="margin-top: 30px;">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:40%;">สินค้า</th>
+                                            <th style="width:10%;">จำนวน (ชิ้น)</th>
+                                            <th style="width:30%;">ปัญหาลักษณะที่แจ้ง</th>
+                                            <th style="width:20%;">ข้อมูลการนัดหมาย</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <t t-foreach="o.line_ids" t-as="line">
+                                            <tr style="height: 30px;">
+                                                <td><span t-esc="line.description or line.product_id.display_name or ''"/></td>
+                                                <td style="text-align:center;"><span t-esc="line.quantity"/></td>
+                                                <td><span t-esc="line.issue_detail or ''"/></td>
+                                                <td><span t-esc="line.appointment_detail or ''"/></td>
+                                            </tr>
+                                        </t>
+                                        <t t-foreach="range(max(9 - line_count, 0))" t-as="i">
+                                            <tr style="height: 30px;">
+                                                <td></td>
+                                                <td></td>
+                                                <td></td>
+                                                <td></td>
+                                            </tr>
+                                        </t>
+                                    </tbody>
+                                </table>
+
+                                <div style="font-size: 25px; margin-top: 20px;"><b>ข้อมูลสินค้า</b></div>
+                                <table class="check-row">
+                                    <tr>
+                                        <td style="width:20%;"></td>
+                                        <td style="width:20%;"><span class="box"><t t-esc="'/' if o.usage_years else ''"/></span> อายุการใช้งาน <span t-esc="o.usage_years or ''"/> ปี</td>
+                                        <td style="width:30%;"><span class="box"><t t-esc="'/' if o.product_in_warranty else ''"/></span> สินค้าในระยะประกัน</td>
+                                        <td style="width:30%;"><span class="box"><t t-esc="'/' if o.product_out_warranty else ''"/></span> สินค้าพ้นระยะประกัน</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td><span class="box"><t t-esc="'/' if o.charge_customer else ''"/></span> เก็บเงิน</td>
+                                        <td><span class="box"><t t-esc="'/' if o.appointment_info else ''"/></span> อื่นๆ <span t-esc="o.appointment_info or ''"/></td>
+                                        <td></td>
+                                    </tr>
+                                </table>
+
+                                <div class="section-title" style="margin-top: 20px;">กรณีมีการเปลี่ยนแปลงการบริการจากที่นัดหมายเดิม เนื่องจาก</div>
+                                <table class="check-row">
+                                    <tr>
+                                        <td><span class="box"><t t-esc="'/' if o.change_cancel_by_customer else ''"/></span> ลูกค้ายกเลิกนัดเนื่องจากไม่สะดวก</td>
+                                        <td><span class="box"><t t-esc="'/' if o.change_no_staff else ''"/></span> เจ้าหน้าที่ไม่มี</td>
+                                        <td><span class="box"><t t-esc="'/' if o.change_no_parts else ''"/></span> ไม่มีอะไหล่</td>
+                                        <td><span class="box"><t t-esc="'/' if o.change_other else ''"/></span> อื่นๆ <span t-esc="o.change_other or ''"/></td>
+                                    </tr>
+                                </table>
+
+                                <table class="check-row">
+                                    <tr>
+                                        <td class="section-title">งานบริการ</td>
+                                        <td><span class="box"><t t-esc="'/' if o.service_install_check else ''"/></span> ตรวจสอบ/ตรวจเช็ค</td>
+                                        <td><span class="box"><t t-esc="'/' if o.service_repair else ''"/></span> แนะนำการติดตั้ง/แก้ไข</td>
+                                        <td><span class="box"><t t-esc="'/' if o.service_install else ''"/></span> ประกอบ/ติดตั้ง</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td><span class="box"><t t-esc="'/' if o.service_troubleshoot else ''"/></span> ตรวจสอบ/แนะนำการแก้ไข</td>
+                                        <td><span class="box"><t t-esc="'/' if o.service_compensation else ''"/></span> ชดเชย</td>
+                                        <td><span class="box"><t t-esc="'/' if o.service_other else ''"/></span> อื่นๆ <span t-esc="o.service_other or ''"/></td>
+                                    </tr>
+                                </table>
+
+                                <table class="check-row">
+                                    <tr>
+                                        <td class="section-title">ประเภทที่พักอาศัย</td>
+                                        <td><span class="box"><t t-esc="'/' if o.residence_house else ''"/></span> บ้านเดี่ยว</td>
+                                        <td><span class="box"><t t-esc="'/' if o.residence_townhouse else ''"/></span> ทาวเฮาท์/ทาวโฮม</td>
+                                        <td><span class="box"><t t-esc="'/' if o.residence_condo else ''"/></span> คอนโด/อพาร์ทเม้นท์</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td><span class="box"><t t-esc="'/' if o.residence_hotel else ''"/></span> โรงแรม/รีสอร์ท</td>
+                                        <td><span class="box"><t t-esc="'/' if o.residence_government else ''"/></span> หน่วยงานราชการ</td>
+                                        <td><span class="box"><t t-esc="'/' if o.residence_private else ''"/></span> หน่วยงานเอกชน</td>
+                                    </tr>
+                                </table>
+
+                                <div class="text-lines">
+                                    รายละเอียดการแก้ไข <span class="dot" style="width:84%;" t-esc="o.repair_detail or ''"/>
+                                    <span class="dot"></span>
+                                    <span class="dot"></span>
+                                </div>
+
+                                <table class="check-row">
+                                    <tr>
+                                        <td class="section-title">ขั้นตอนการติดตั้ง</td>
+                                        <td><span class="box"><t t-esc="'/' if o.install_silicone else ''"/></span> งานซิลิโคนเรียบร้อย</td>
+                                        <td><span class="box"><t t-esc="'/' if o.install_accessories else ''"/></span> ติดตั้งอุปกรณ์ครบ</td>
+                                        <td><span class="box"><t t-esc="'/' if o.install_tested else ''"/></span> ผ่านการตรวจสอบ/ทดสอบการทำงานเรียบร้อย</td>
+                                    </tr>
+                                </table>
+
+                                <table class="check-row">
+                                    <tr>
+                                        <td class="section-title">กรณีเบิกสินค้า</td>
+                                        <td>สภาพกล่อง</td>
+                                        <td><span class="box"><t t-esc="'/' if o.box_condition == 'good' else ''"/></span> ดี</td>
+                                        <td>สภาพสินค้า</td>
+                                        <td><span class="box"><t t-esc="'/' if o.product_condition == 'good' else ''"/></span> ดี</td>
+                                        <td>อุปกรณ์</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td></td>
+                                        <td><span class="box"><t t-esc="'/' if o.box_condition == 'damaged' else ''"/></span> ชำรุด</td>
+                                        <td></td>
+                                        <td><span class="box"><t t-esc="'/' if o.product_condition == 'damaged' else ''"/></span> ชำรุด</td>
+                                        <td><span class="box"><t t-esc="'/' if o.accessory_condition == 'complete' else ''"/></span> ครบ</td>
+                                    </tr>
+                                </table>
+
+                                <table class="check-row">
+                                    <tr>
+                                        <td class="section-title">สรุปปัญหา</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_installation else ''"/></span> การติดตั้ง</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_usage else ''"/></span> การใช้งาน</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_sanitary else ''"/></span> ระบบสุขาภิบาล</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_unknown else ''"/></span> ไม่ทราบสาเหตุ</td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_quality else ''"/></span> คุณภาพสินค้า</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_transport else ''"/></span> การขนส่ง</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_lifetime else ''"/></span> อายุการใช้งาน</td>
+                                        <td><span class="box"><t t-esc="'/' if o.summary_other else ''"/></span> อื่นๆ <span t-esc="o.summary_other or ''"/></td>
+                                    </tr>
+                                </table>
+
+                                <div class="text-lines">
+                                    ข้อเสนอแนะเพิ่มเติม <span class="dot" style="width:84%;" t-esc="o.suggestion or ''"/>
+                                    <span class="dot"></span>
+                                </div>
+
+                                <div class="text-lines">
+                                    หมายเหตุ <span class="dot" style="width:91%;" t-esc="o.note or ''"/>
+                                    <span class="dot"></span>
+                                </div>
+
+                                <table class="sign-table">
+                                    <tr>
+                                        <td style="width:50%;">
+                                            ลงชื่อ<span class="dot" style="width:62%;" t-esc="o.service_by_name or ''"/>ผู้ให้บริการ<br/>
+                                            (<span class="dot" style="width:78%;"></span>)<br/>
+                                            วันที่<span class="dot" style="width:76%;" t-esc="o.service_by_date.strftime('%d/%m/%Y') if o.service_by_date else ''"/>
+                                        </td>
+                                        <td style="width:50%;">
+                                            ลงชื่อ<span class="dot" style="width:62%;" t-esc="o.customer_sign_name or ''"/>ผู้รับบริการ<br/>
+                                            (<span class="dot" style="width:78%;"></span>)<br/>
+                                            วันที่<span class="dot" style="width:76%;" t-esc="o.customer_sign_date.strftime('%d/%m/%Y') if o.customer_sign_date else ''"/>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+
+                            <div class="sr-footer">
+                                <div>อนุมัติใช้วันที่ 1/05/2560</div>
+                                <div style="text-align:right;">FM-SRV-01&#160; Rev.04</div>
+                            </div>
+                        </div>
+                    </t>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>
