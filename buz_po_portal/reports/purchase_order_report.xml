@@ -374,17 +374,17 @@
     
         <!-- ฝั่งขวา -->
         <div style="width: 40%; padding: 0 0 0 2px; box-sizing: border-box; height: 100%; display: flex; flex-direction: column;">
-            <t t-set="amount_untaxed" t-value="o.amount_untaxed or 0.0"/>
+            <t t-set="total_gross" t-value="sum([(line.product_qty * line.price_unit) for line in o.order_line])"/>
             <t t-set="total_discount" t-value="sum([(line.product_qty * line.price_unit * (line.discount or 0.0)/100.0) for line in o.order_line])"/>
-            <t t-set="amount_after_discount" t-value="(amount_untaxed or 0.0) - (total_discount or 0.0)"/>
+            <t t-set="amount_untaxed" t-value="o.amount_untaxed or 0.0"/>
             <t t-set="amount_tax" t-value="o.has_vat and o.amount_tax or 0.0"/>
-            <t t-set="amount_total" t-value="(o.has_vat and amount_after_discount + amount_tax) or amount_after_discount"/>
+            <t t-set="amount_total" t-value="(o.has_vat and amount_untaxed + amount_tax) or amount_untaxed"/>
     
             <table style="width: 100%; border-collapse: collapse; font-size: 20px; border: 1px solid #000; margin: 0; height: 100%;">
                 <tr>
                     <td style="text-align: right; padding: 2px 4px; border: 1px solid #000;">ราคารวม/Total:</td>
                     <td style="text-align: right; padding: 2px 4px; border: 1px solid #000;">
-                        <span t-esc="'{:,.2f}'.format(amount_untaxed)"/>
+                        <span t-esc="'{:,.2f}'.format(total_gross)"/>
                     </td>
                 </tr>
                 <tr>
@@ -396,7 +396,7 @@
                 <tr>
                     <td style="text-align: right; padding: 2px 4px; border: 1px solid #000;">คงเหลือ/Remaining:</td>
                     <td style="text-align: right; padding: 2px 4px; border: 1px solid #000;">
-                        <span t-esc="'{:,.2f}'.format(amount_after_discount)"/>
+                        <span t-esc="'{:,.2f}'.format(amount_untaxed)"/>
                     </td>
                 </tr>
                 <tr>
