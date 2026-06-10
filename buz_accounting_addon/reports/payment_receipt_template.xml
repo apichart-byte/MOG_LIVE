@@ -128,6 +128,10 @@
                         <t t-foreach="groups_of_7" t-as="group">
                           <div t-attf-style="#{page_number != 1 and 'page-break-before: always;' or ''}">
     
+                          <div style="float: right; font-size: 18px; font-weight: bold; margin-top: -5px;">
+                            หน้า <span t-esc="page_number"/> / <span t-esc="total_pages"/>
+                          </div>
+                          <div style="clear: right;"></div>
     
                         <t t-call="buz_custom_invoice.report_invoice_document_style"/>
                         <!-- Header Section -->
@@ -156,7 +160,7 @@
                         
 
                           <!-- Right side: Document info -->
-                     <div class="col-6" style="text-align: right; padding-left: 0; padding-right: 0; float: right; margin-top: -20px;">
+                      <div class="col-6" t-attf-style="text-align: right; padding-left: 0; padding-right: 0; float: right; margin-top: #{page_number == 1 and '-20px' or '0'};">
                         <div class="info-box" style="font-size: 20px;">
                             <div class="mb-2">
                                 <strong style="width: 60%; display: inline-block; font-size: 20px;">เลขที่เอกสาร/No:</strong>
@@ -270,22 +274,22 @@
                       
                             <t t-foreach="group" t-as="line">
                               <tr style="font-size: 18px; height: 30px;">
-                                <td style="border: 1px solid black; text-align: center; vertical-align: middle;">
+                                <td style="border: 1px solid black; text-align: center; vertical-align: middle; height: 30px;">
                                   <span t-esc="current_line_number"/>
                                 </td>
                                 <!-- Invoice Number -->
-                                <td style="border: 1px solid black; text-align: center; vertical-align: middle;">
+                                <td style="border: 1px solid black; text-align: center; vertical-align: middle; height: 30px;">
                                   <span t-esc="line.move_id.name"/>
                                 </td>
                                 <!-- Invoice Date -->
-                                <td style="border: 1px solid black; text-align: center; vertical-align: middle;">
+                                <td style="border: 1px solid black; text-align: center; vertical-align: middle; height: 30px;">
                                     <span t-field="line.move_id.invoice_date" t-options='{"format": "dd/MM/yyyy"}'/>
                                 </td>
                                 <!-- Due Date -->
-                                <td style="border: 1px solid black; text-align: center; vertical-align: middle;">
+                                <td style="border: 1px solid black; text-align: center; vertical-align: middle; height: 30px;">
                                 </td>
                                 <!-- Amount Paid -->
-                                <td style="border: 1px solid black; text-align: right; vertical-align: middle; padding-right: 4px;">
+                                <td style="border: 1px solid black; text-align: right; vertical-align: middle; padding-right: 4px; height: 30px;">
                                   <span t-esc="'{:,.2f}'.format(line.amount_total_signed)"/>
                                 </td>
 
