@@ -209,11 +209,7 @@
                                 <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; box-sizing: border-box;">
                                     <div>
                                         <strong>สถานที่ส่งของ:</strong>
-                                        <t t-set="delivery_partner" t-value="doc.delivery_partner_id if doc.delivery_partner_id and doc.delivery_partner_id.street else doc.partner_id"/>
-                                        <span t-field="delivery_partner.street"/>
-                                        <t t-if="delivery_partner.city"><span t-field="delivery_partner.city"/></t>
-                                        <t t-if="delivery_partner.state_id"><span t-field="delivery_partner.state_id.name"/></t>
-                                        <span t-field="delivery_partner.zip"/>
+                                        <br/>
                                     </div>
                                             <div><strong>ชื่อผู้ติดต่อ:</strong>
                                                 <t t-if="doc.delivery_partner_id and doc.delivery_partner_id.phone">

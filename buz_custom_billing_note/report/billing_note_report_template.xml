@@ -121,7 +121,11 @@
                                     <div class="info-box" style="height: 180px;">
                                         <div style="margin-bottom: 2px;">
                                             <strong style="width: 15%; display: inline-block;">นามผู้ซื้อ:</strong>
-                                            <span t-field="doc.partner_id.name"/> <span t-field="doc.partner_id.branch"/>
+                                            <span t-field="doc.partner_id.name"/> <t t-if="doc.partner_id.branch">
+                                            <t t-if="doc.partner_id.branch in ('00000', 'สำนักงานใหญ่')">(สำนักงานใหญ่)</t>
+                                            <t t-elif="doc.partner_id.branch.isdigit()">(สาขาที่ <t t-esc="int(doc.partner_id.branch)"/>)</t>
+                                            <t t-else="">(สาขาที่ <t t-esc="doc.partner_id.branch"/>)</t>
+                                            </t>
                                         </div>
                                         <div style="margin-bottom: 2px;">
                                             <strong style="width: 10%; display: inline-block;">ที่อยู่:</strong>
