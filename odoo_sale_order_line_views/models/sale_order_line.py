@@ -19,7 +19,7 @@
 #    If not, see <http://www.gnu.org/licenses/>.
 #
 #############################################################################
-from odoo import models, fields
+from odoo import models, fields, api
 
 
 class SaleOrderLine(models.Model):
@@ -35,3 +35,20 @@ class SaleOrderLine(models.Model):
     contact_phone = fields.Char(related="order_partner_id.phone",
                                 string='Phone',
                                 help='Phone number of the customer')
+    reserve_qty = fields.Float(
+        string="Reserve Qty",
+        compute='_compute_reserve_qty',
+        help='Quantity reserved in stock for this line',
+    )
+
+    @api.depends('move_ids.state', 'move_ids.quantity', 'move_ids.product_uom')
+    def _compute_reserve_qty(self):
+        for line in self:
+            reserved = 0.0
+            for move in line.move_ids.filtered(
+                lambda m: m.state in ('assigned', 'partially_available')
+            ):
+                reserved += move.product_uom._compute_quantity(
+                    move.quantity, line.product_uom
+                )
+            line.reserve_qty = reserved

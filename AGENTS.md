@@ -33,7 +33,7 @@
 - `check_tz.py` — one-off timezone debug script, not part of any module
 
 #database and log
-Database MOG_LIVE
+Database MOG_TEST
 read /etc/instance1.conf
 
 ## Known issues & fixes
