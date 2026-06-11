@@ -128,6 +128,7 @@
                                             <span t-field="doc.partner_id.street"/> <span t-field="doc.partner_id.street2"/>
                                             <br/>
                                             <span t-field="doc.partner_id.city"/>
+                                            <span t-field="doc.partner_id.state_id.name"/>
                                             <span t-field="doc.partner_id.zip"/>
                                         </div>
                                         <div style="margin-bottom: 2px;">
