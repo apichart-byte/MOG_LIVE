@@ -750,51 +750,27 @@ class EtaxTransaction(models.Model):
         for record in self:
             record.amount_cur = sum(line.price_subtotal for line in record.line_ids)
 
-    @api.depends('line_ids.price_subtotal', 'original_amount', 'amount_untaxed')
+    @api.depends('line_ids.price_subtotal', 'original_amount', 'amount_untaxed', 'invoice_id')
     def _compute_amount_tax(self):
         for record in self:
-            total_tax = sum(line.price_tax for line in record.line_ids)
+            if record.invoice_id and record.document_type in ('80', '81'):
+                record.amount_tax = record.invoice_id.amount_tax
+            else:
+                total_tax = sum(line.price_tax for line in record.line_ids)
+                if total_tax:
+                    total_tax = abs(record.difference_amount or 0.0) * 7 / 100
+                record.amount_tax = total_tax
 
-            if total_tax > 0: # ตรวจสอบว่ามีภาษีหรือไม่
-                total_tax = abs(record.difference_amount or 0.0) * 7 / 100  # สมมติอัตราภาษี 7%
-            else :
-                total_tax = 0
-
-            record.amount_tax = total_tax
-
-            # invoice = self.env['account.move'].search([('name', '=', record.journal_entry_memo)], limit=1)
-            # record.amount_tax = invoice.amount_tax if invoice.amount_tax else 0.0
-
-            # if record.document_type in ['T03']:
-            #     total = abs((record.original_amount or 0.0) - (record.amount_untaxed or 0.0))
-            # elif record.document_type in ['81', '80']:
-            #     total = sum(line.price_subtotal for line in record.line_ids)
-            # else:
-            #     total = 0.0
-
-            # record.amount_tax = (total or 0.0) * 7 / 100
-    
-    @api.depends('line_ids.price_subtotal', 'original_amount', 'amount_untaxed')
+    @api.depends('line_ids.price_subtotal', 'original_amount', 'amount_untaxed', 'invoice_id')
     def _compute_net_amount_tax(self):
         for record in self:
-            # คำนวณภาษีจากรายการสินค้าโดยตรง (ใช้ค่าจาก tax_ids ที่เลือกจริง)
-            total_tax = sum(line.price_tax for line in record.line_ids) 
-
-            if total_tax > 0: # ตรวจสอบว่ามีภาษีหรือไม่
-                total_tax = abs(record.total_after_deposit or 0.0) * 7 / 100  # สมมติอัตราภาษี 7%
-            else :
-                total_tax = 0
-
-            record.amount_vat = total_tax
-
-            # if record.document_type in ['T03']:
-            #     total = abs((record.original_amount or 0.0) - (record.amount_untaxed or 0.0))
-            # elif record.document_type in ['81', '80']:
-            #     total = sum(line.price_subtotal for line in record.line_ids)
-            # else:
-            #     total = 0.0
-
-            # record.amount_vat = (total or 0.0) * 7 / 100
+            if record.invoice_id and record.document_type == 'T03':
+                record.amount_vat = record.invoice_id.amount_tax
+            else:
+                total_tax = sum(line.price_tax for line in record.line_ids)
+                if total_tax:
+                    total_tax = abs(record.total_after_deposit or 0.0) * 7 / 100
+                record.amount_vat = total_tax
 
     @api.depends('line_ids.price_subtotal', 'original_amount', 'amount_untaxed', 'amount_tax')
     def _compute_amount_total(self):
