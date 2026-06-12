@@ -555,6 +555,8 @@
                 <field name="target_amount"/>
                 <field name="achieved_amount"/>
                 <field name="percent_achieved"/>
+                <field name="sale_order_achieved"/>
+                <field name="delivery_achieved"/>
                 <field name="state"/>
                 <field name="currency_id"/>
                 <templates>
@@ -562,8 +564,11 @@
 
                         <t t-set="target_val" t-value="record.target_amount.raw_value or 0"/>
                         <t t-set="achieved_val" t-value="record.achieved_amount.raw_value or 0"/>
+                        <t t-set="so_val" t-value="record.sale_order_achieved.raw_value or 0"/>
+                        <t t-set="del_val" t-value="record.delivery_achieved.raw_value or 0"/>
                         <t t-set="percent" t-value="target_val > 0 ? Math.min(Math.round((achieved_val / target_val) * 100), 999) : 0"/>
-                        <t t-set="bar_color" t-value="percent >= 100 ? '#059669' : percent >= 75 ? '#2563eb' : percent >= 50 ? '#0891b2' : percent >= 25 ? '#d97706' : '#dc2626'"/>
+                        <t t-set="so_percent" t-value="target_val > 0 ? Math.min(Math.round((so_val / target_val) * 100), 999) : 0"/>
+                        <t t-set="del_percent" t-value="target_val > 0 ? Math.min(Math.round((del_val / target_val) * 100), 999) : 0"/>
                         <t t-set="badge_cls" t-value="percent >= 100 ? 'o_badge_success' : percent >= 50 ? 'o_badge_warning' : 'o_badge_danger'"/>
 
                         <div class="o_team_target_card oe_kanban_global_click">
@@ -585,9 +590,16 @@
 
                             <div class="o_team_card_metrics">
                                 <div class="o_metric_col">
-                                    <p class="o_metric_label">Achieved</p>
+                                    <p class="o_metric_label">Sale Order</p>
                                     <p class="o_metric_value o_metric_achieved">
-                                        <field name="achieved_amount" widget="monetary" options="{'currency_field': 'currency_id'}"/>
+                                        <field name="sale_order_achieved" widget="monetary" options="{'currency_field': 'currency_id'}"/>
+                                    </p>
+                                </div>
+                                <div class="o_metric_divider"/>
+                                <div class="o_metric_col">
+                                    <p class="o_metric_label">Delivery</p>
+                                    <p class="o_metric_value o_metric_achieved">
+                                        <field name="delivery_achieved" widget="monetary" options="{'currency_field': 'currency_id'}"/>
                                     </p>
                                 </div>
                                 <div class="o_metric_divider"/>
@@ -601,12 +613,23 @@
 
                             <div class="o_team_card_progress">
                                 <div class="o_progress_header">
-                                    <span class="o_progress_label">Progress</span>
-                                    <span class="o_progress_value"><t t-out="percent"/>%</span>
+                                    <span class="o_progress_label">Sale Order Confirm</span>
+                                    <span class="o_progress_value"><t t-out="so_percent"/>%</span>
                                 </div>
                                 <div class="o_progress_track">
                                     <div class="o_progress_fill"
-                                         t-att-style="'width:' + Math.min(percent, 100) + '%; background-color:' + bar_color + ';'"/>
+                                         t-att-style="'width:' + Math.min(so_percent, 100) + '%; background-color:#2563eb;'"/>
+                                </div>
+                            </div>
+
+                            <div class="o_team_card_progress">
+                                <div class="o_progress_header">
+                                    <span class="o_progress_label">Delivery</span>
+                                    <span class="o_progress_value"><t t-out="del_percent"/>%</span>
+                                </div>
+                                <div class="o_progress_track">
+                                    <div class="o_progress_fill"
+                                         t-att-style="'width:' + Math.min(del_percent, 100) + '%; background-color:#059669;'"/>
                                 </div>
                             </div>
 

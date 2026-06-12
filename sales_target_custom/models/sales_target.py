@@ -72,6 +72,18 @@ class SalesTarget(models.Model):
     total_delivered_qty = fields.Float(string='Total Delivered Qty', compute='_compute_counters')
     delivery_order_count = fields.Integer(string='Delivery Orders', compute='_compute_counters')
     
+    # Separate achievement amounts (always computed regardless of target_point)
+    sale_order_achieved = fields.Monetary(
+        string='Sale Order Achieved',
+        compute='_compute_separate_achievements',
+        currency_field='currency_id',
+    )
+    delivery_achieved = fields.Monetary(
+        string='Delivery Achieved',
+        compute='_compute_separate_achievements',
+        currency_field='currency_id',
+    )
+    
     # Additional Information
     note = fields.Text(string='Notes', help='Additional notes and comments about this sales target')
 
@@ -133,20 +145,21 @@ class SalesTarget(models.Model):
                     domain = record._get_sale_order_domain()
                     sale_orders = self.env['sale.order'].search(domain)
                     delivered_amount = 0.0
-                    done_pickings = sale_orders.mapped('picking_ids').filtered(
-                        lambda p: p.state == 'done'
-                    )
-                    for picking in done_pickings:
-                        for move in picking.move_ids.filtered(
-                            lambda m: m.state == 'done' and m.sale_line_id
-                        ):
-                            sol = move.sale_line_id
-                            if sol.product_uom_qty > 0 and move.quantity > 0:
-                                unit_price = sol.price_subtotal / sol.product_uom_qty
-                                if picking.picking_type_code == 'outgoing':
-                                    delivered_amount += move.quantity * unit_price
-                                elif picking.picking_type_code == 'incoming':
-                                    delivered_amount -= move.quantity * unit_price
+                    for order in sale_orders:
+                        for line in order.order_line:
+                            for move in line.move_ids.filtered(
+                                lambda m: m.state == 'done'
+                                and m.picking_id.picking_type_code in ('outgoing', 'incoming')
+                            ):
+                                if line.product_uom_qty > 0 and move.quantity > 0:
+                                    unit_price = line.price_subtotal / line.product_uom_qty
+                                    qty = move.product_uom._compute_quantity(
+                                        move.quantity, line.product_uom
+                                    )
+                                    if move.picking_id.picking_type_code == 'outgoing':
+                                        delivered_amount += qty * unit_price
+                                    else:
+                                        delivered_amount -= qty * unit_price
                     record.achieved_amount = delivered_amount
                     
                 elif record.target_point in ['invoice_validate', 'invoice_paid']:
@@ -161,6 +174,39 @@ class SalesTarget(models.Model):
             except (AccessError, MissingError) as e:
                 _logger.warning(f"Access error computing achieved amount for target {record.id}: {e}")
                 record.achieved_amount = 0.0
+
+    @api.depends('date_start', 'date_end', 'user_id', 'team_ids')
+    def _compute_separate_achievements(self):
+        for record in self:
+            record.sale_order_achieved = 0.0
+            record.delivery_achieved = 0.0
+            if not record.date_start or not record.date_end:
+                continue
+            try:
+                domain = record._get_sale_order_domain()
+                sale_orders = self.env['sale.order'].search(domain)
+                record.sale_order_achieved = sum(sale_orders.mapped('amount_untaxed'))
+                delivered_amount = 0.0
+                for order in sale_orders:
+                    for line in order.order_line:
+                        for move in line.move_ids.filtered(
+                            lambda m: m.state == 'done'
+                            and m.picking_id.picking_type_code in ('outgoing', 'incoming')
+                        ):
+                            if line.product_uom_qty > 0 and move.quantity > 0:
+                                unit_price = line.price_subtotal / line.product_uom_qty
+                                qty = move.product_uom._compute_quantity(
+                                    move.quantity, line.product_uom
+                                )
+                                if move.picking_id.picking_type_code == 'outgoing':
+                                    delivered_amount += qty * unit_price
+                                else:
+                                    delivered_amount -= qty * unit_price
+                record.delivery_achieved = delivered_amount
+            except (AccessError, MissingError) as e:
+                _logger.warning(f"Access error computing separate achievements for target {record.id}: {e}")
+                record.sale_order_achieved = 0.0
+                record.delivery_achieved = 0.0
 
     @api.depends('achieved_amount', 'target_amount')
     def _compute_percent_achieved(self):
@@ -225,37 +271,34 @@ class SalesTarget(models.Model):
                 sale_orders = self.env['sale.order'].search(sale_domain)
                 record.sale_order_count = len(sale_orders)
                 
-                # Delivery orders
+                # Sale order lines / quantities / delivery
                 if sale_orders:
-                    done_pickings = sale_orders.mapped('picking_ids').filtered(
-                        lambda p: p.state == 'done'
-                    )
-                    record.delivery_order_count = len(done_pickings)
-                else:
-                    record.delivery_order_count = 0
-                
-                # Sale order lines / quantities
-                if sale_orders:
-                    sale_lines = self.env['sale.order.line'].search([('order_id', 'in', sale_orders.ids)])
+                    sale_lines = sale_orders.order_line
                     record.sale_order_line_count = len(sale_lines)
                     record.total_ordered_qty = sum(sale_lines.mapped('product_uom_qty'))
                     done_pickings = sale_orders.mapped('picking_ids').filtered(
                         lambda p: p.state == 'done'
                     )
-                    out_moves = done_pickings.filtered(
-                        lambda p: p.picking_type_code == 'outgoing'
-                    ).mapped('move_ids').filtered(lambda m: m.state == 'done')
-                    in_moves = done_pickings.filtered(
-                        lambda p: p.picking_type_code == 'incoming'
-                    ).mapped('move_ids').filtered(lambda m: m.state == 'done')
-                    record.total_delivered_qty = (
-                        sum(out_moves.mapped('quantity'))
-                        - sum(in_moves.mapped('quantity'))
-                    )
+                    record.delivery_order_count = len(done_pickings)
+                    total_delivered = 0.0
+                    for line in sale_lines:
+                        for move in line.move_ids.filtered(
+                            lambda m: m.state == 'done'
+                            and m.picking_id.picking_type_code in ('outgoing', 'incoming')
+                        ):
+                            qty = move.product_uom._compute_quantity(
+                                move.quantity, line.product_uom
+                            )
+                            if move.picking_id.picking_type_code == 'outgoing':
+                                total_delivered += qty
+                            else:
+                                total_delivered -= qty
+                    record.total_delivered_qty = total_delivered
                 else:
                     record.sale_order_line_count = 0
                     record.total_ordered_qty = 0.0
                     record.total_delivered_qty = 0.0
+                    record.delivery_order_count = 0
                     
                 # Invoices
                 invoice_domain = record._get_invoice_domain()
