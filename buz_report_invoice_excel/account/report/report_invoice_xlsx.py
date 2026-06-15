@@ -85,7 +85,7 @@ class ReportInvoiceExcel(models.AbstractModel):
                     "quantity": quantity,
                     "uom": self._safe_text(uom.name),
                     "unit_price": unit_price,
-                    "sum_amount": unit_price * quantity,
+                    "sum_amount": line.price_subtotal,
                     "note": ", ".join(filter(None, pickings.mapped("delivery_note"))),
                     "trade_channel": self._safe_text(
                         getattr(invoice, "trade_channel", "") or ""
