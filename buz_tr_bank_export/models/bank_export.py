@@ -76,6 +76,12 @@ class BuzTrBankExport(models.Model):
         for record in self:
             record.state = 'draft'
 
+    def action_done(self):
+        for record in self:
+            if record.state != 'confirmed':
+                continue
+            record.state = 'done'
+
 
 class BuzTrBankExportLine(models.Model):
     _name = 'buz.tr.bank.export.line'
@@ -86,7 +92,7 @@ class BuzTrBankExportLine(models.Model):
     lot_no = fields.Char(string='Lot No.')
     import_date = fields.Date(string='Import date')
     etd_date = fields.Date(string='ETDDATE')
-    purchase_id = fields.Many2one('purchase.order', string='PO No.', domain=[('state', '=', 'purchase')])
+    purchase_id = fields.Many2one('purchase.order', string='PO No.', domain=[('state', '!=', 'cancel')])
     po_ref = fields.Char(string='Ref.No.', related='purchase_id.partner_ref', store=True, readonly=False)
     po_amount = fields.Monetary(string='PO Amount', related='purchase_id.amount_total', store=True, readonly=False)
     currency_id = fields.Many2one(related='export_id.currency_id', depends=['export_id.currency_id'], store=True)
