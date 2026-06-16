@@ -87,7 +87,7 @@ class InternalConsumeRequest(models.Model):
         'stock.location',
         string='Destination Location',
         required=True,
-        domain="[('usage', 'in', ['customer', 'inventory'])]",
+        domain="[]",
         default=lambda self: self._default_location_dest_id(),
         states={'to_approve': [('readonly', True)], 'approved': [('readonly', True)], 'done': [('readonly', True)], 'rejected': [('readonly', True)]}
     )
@@ -396,6 +396,11 @@ class InternalConsumeRequest(models.Model):
         
         # Auto create picking
         self.action_create_picking()
+
+        # Auto-confirm and reserve stock for internal transfers
+        if self.picking_type_id.code == 'internal':
+            self.picking_id.action_confirm()
+            self.picking_id.action_assign()
 
     def action_reject(self):
         """Reject request"""

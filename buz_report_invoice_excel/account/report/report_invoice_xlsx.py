@@ -57,6 +57,12 @@ class ReportInvoiceExcel(models.AbstractModel):
                     unit_price = line.price_unit
 
                 quantity = line.quantity
+                sum_amount = line.price_subtotal
+                if invoice.move_type == "out_refund":
+                    quantity = quantity * -1 if quantity > 0 else quantity
+                    unit_price = unit_price * -1 if unit_price > 0 else unit_price
+                    sum_amount = sum_amount * -1 if sum_amount > 0 else sum_amount
+
                 uom = line.product_uom_id or (product.uom_id if product else self.env["uom.uom"])
 
                 rows.append({
@@ -85,7 +91,7 @@ class ReportInvoiceExcel(models.AbstractModel):
                     "quantity": quantity,
                     "uom": self._safe_text(uom.name),
                     "unit_price": unit_price,
-                    "sum_amount": line.price_subtotal,
+                    "sum_amount": sum_amount,
                     "note": ", ".join(filter(None, pickings.mapped("delivery_note"))),
                     "trade_channel": self._safe_text(
                         getattr(invoice, "trade_channel", "") or ""
