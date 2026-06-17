@@ -416,8 +416,20 @@ class EtaxTransaction(models.Model):
                     else ''
                 ), # เหตุผลในการเพิ่ม/ลดหนี้
 
-                "H07-ADDITIONAL_REF_ASSIGN_ID": (self.selected_invoice_id.name if self.selected_invoice_id.name else self.invoice_id.name) if self.document_type in ('80', '81') else "", # อ้างอิงใบกำกับภาษีเดิม [CN, DN]
-                "H08-ADDITIONAL_REF_ISSUE_DTM": (self.selected_invoice_id.invoice_date.strftime("%Y-%m-%dT00:00:00") if self.selected_invoice_id.name else self.invoice_id.invoice_date.strftime("%Y-%m-%dT00:00:00")) if self.document_type in ('80', '81') else "", # วันที่ใบกำกับภาษีเดิม [CN, DN]
+                "H07-ADDITIONAL_REF_ASSIGN_ID": (
+                    self.selected_invoice_id.name
+                    if self.selected_invoice_id
+                    else self.invoice_id.original_invoice_number
+                    if hasattr(self.invoice_id, 'original_invoice_number') and self.invoice_id.original_invoice_number
+                    else self.invoice_id.name
+                ) if self.document_type in ('80', '81') else "", # อ้างอิงใบกำกับภาษีเดิม [CN, DN]
+                "H08-ADDITIONAL_REF_ISSUE_DTM": (
+                    self.selected_invoice_id.invoice_date.strftime("%Y-%m-%dT00:00:00")
+                    if self.selected_invoice_id
+                    else self.invoice_id.original_invoice_date.strftime("%Y-%m-%dT00:00:00")
+                    if hasattr(self.invoice_id, 'original_invoice_date') and self.invoice_id.original_invoice_date
+                    else self.invoice_id.invoice_date.strftime("%Y-%m-%dT00:00:00")
+                ) if self.document_type in ('80', '81') else "", # วันที่ใบกำกับภาษีเดิม [CN, DN]
                 "H09-ADDITIONAL_REF_TYPE_CODE": self.document_type if self.document_type in ('80', '81') else "", # T03 = ว่าง
                 "H10-ADDITIONAL_REF_DOCUMENT_NAME": "",
                 "H11-DELIVERY_TYPE_CODE": "",
@@ -792,11 +804,16 @@ class EtaxTransaction(models.Model):
             else:
                 record.net_amount_total = round((record.total_after_deposit or 0.0) + (record.amount_vat or 0.0), 2)
 
-    @api.depends('invoice_id.amount_untaxed')
+    @api.depends('invoice_id.amount_untaxed', 'invoice_id.original_tax_invoice_amount')
     def _compute_original_amount(self):
         for record in self:
             invoice = record.selected_invoice_id if record.selected_invoice_id else False
-            record.original_amount = invoice.amount_untaxed if invoice and invoice.amount_untaxed else 0.0
+            if invoice and invoice.amount_untaxed:
+                record.original_amount = invoice.amount_untaxed
+            elif hasattr(record.invoice_id, 'original_tax_invoice_amount') and record.invoice_id.original_tax_invoice_amount:
+                record.original_amount = record.invoice_id.original_tax_invoice_amount
+            else:
+                record.original_amount = 0.0
 
     @api.depends('line_ids.price_unit', 'line_ids.quantity', 'line_ids.discount')
     def _compute_amount_disc(self):
