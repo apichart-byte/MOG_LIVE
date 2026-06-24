@@ -422,6 +422,36 @@ class ArSettlement(models.Model):
                 _('Please set a Bank Fee Account when bank fee is specified.')
             )
 
+        # ── Validate that all invoices and credit notes are still posted ──
+        unposted_invoices = inv_selected.filtered(
+            lambda l: l.invoice_id.state != 'posted'
+        )
+        if unposted_invoices:
+            lines = []
+            for line in unposted_invoices:
+                inv = line.invoice_id
+                lines.append(f'{inv.name} (ลูกค้า: {inv.partner_id.display_name}, ยอด: {inv.amount_residual:,.2f})')
+            names = '\n'.join(lines)
+            raise UserError(
+                _('ไม่สามารถยืนยันรายการได้ เนื่องจากใบแจ้งหนี้ต่อไปนี้ไม่ได้อยู่ในสถานะ "ลงรายการบัญชีแล้ว" (Posted):\n%s\n'
+                  'กรุณาโหลดใบแจ้งหนี้ใหม่อีกครั้ง หรือลบรายการนี้ออกจาก Settlement')
+                % names
+            )
+        unposted_credit_notes = self.credit_line_ids.filtered(
+            lambda cl: cl.selected and cl.credit_move_id.state != 'posted'
+        )
+        if unposted_credit_notes:
+            lines = []
+            for cl in unposted_credit_notes:
+                cn = cl.credit_move_id
+                lines.append(f'{cn.name} (ลูกค้า: {cn.partner_id.display_name}, ยอด: {cn.amount_residual:,.2f})')
+            names = '\n'.join(lines)
+            raise UserError(
+                _('ไม่สามารถยืนยันรายการได้ เนื่องจากใบลดหนี้ต่อไปนี้ไม่ได้อยู่ในสถานะ "ลงรายการบัญชีแล้ว" (Posted):\n%s\n'
+                  'กรุณาโหลดใบลดหนี้ใหม่อีกครั้ง หรือลบรายการนี้ออกจาก Settlement')
+                % names
+            )
+
         # Compute diff from actual allocated amounts (not the computed field
         # which may still reflect stale pay_amount=0 values)
         credit_used = sum(self.credit_line_ids.filtered('selected').mapped('use_amount'))

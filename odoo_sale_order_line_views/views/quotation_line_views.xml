@@ -61,6 +61,9 @@
                 <field name="qty_to_invoice"/>
                 <field name="product_uom" string="Unit of Measure"
                        groups="uom.group_uom"/>
+                <field name="project_name" optional="show"/>
+                <field name="partner_shipping_id" optional="show"/>
+                <field name="date_done" optional="show"/>
                 <field name="price_subtotal" sum="Total" widget="monetary"/>
                 <field name="state" string="Status"
                        decoration-success="state == 'sale' or state == 'done'"

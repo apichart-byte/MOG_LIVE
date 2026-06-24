@@ -36,6 +36,7 @@
         'report/request_change_products_ex.xml',
         'report/request_job_order.xml',
         'report/delivery_report_tem.xml',
+        'report/request_change_products_claim.xml',
 
     ],
     'installable': True,

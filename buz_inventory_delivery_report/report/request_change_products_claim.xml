@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <!-- Paper Format for Claim Reports -->
-    <record id="paperformat_service_claim" model="report.paperformat">
-        <field name="name">Service Claim A4 Landscape</field>
+    <!-- Paper Format for delivery document Reports -->
+    <record id="paperformat_request_change_products_claim" model="report.paperformat">
+        <field name="name">Request Change Products Claim A4</field>
         <field name="default" eval="True"/>
         <field name="format">A4</field>
         <field name="orientation">Landscape</field>
@@ -15,16 +15,16 @@
         <field name="dpi">96</field>
     </record>
     
-    <template id="report_service_claim_document">
+    <template id="request_change_products_claim_document">
         <t t-call="web.html_container">
             <t t-foreach="docs" t-as="o">
-                <t t-call="web.basic_layout">
+                <t t-call="web.external_layout">
                     <div class="page">
 
                         <style>
                             @font-face {
                                 font-family: 'Sarabun';
-                                src: url('/buz_service_receipt/static/fonts/Sarabun-Bold.ttf') format('truetype');
+                                src: url('/buz_inventory_delivery_report/static/fonts/Sarabun-Bold.ttf') format('truetype');
                             }
                             
                             @page {
@@ -90,8 +90,8 @@
                         </style>
 
                         
-                         <!-- Claim Lines -->
-                         <t t-set="move_list" t-value="o.line_ids"/>
+                         <!-- Order Lines -->
+                         <t t-set="move_list" t-value="o.move_ids"/>
                          <t t-set="groups_of_7" t-value="[move_list[i:i+7] for i in range(0, len(move_list), 7)]"/>
                          <t t-set="page_number" t-value="1"/>
                          <t t-set="line_number" t-value="1"/>
@@ -100,6 +100,8 @@
                             
                              <div t-attf-style="#{page_number != 1 and 'page-break-before: always;' or ''}">
  
+                          <t t-if="groups_of_7">
+                              <div>
                              <!-- เงื่อนไขแสดงเลขหน้าเฉพาะถ้ามีหลายหน้า -->
                                     <t t-if="total_pages &gt; 1">
                                         <div style="text-align: right; font-weight: bold; font-size: 14px; margin-bottom: 5px;">
@@ -122,7 +124,7 @@
                                 </div>
                             </div>
                             <div class="col-4 text-end">
-                                <img src="/buz_service_receipt/static/img/LOGO_MOGEN.png"
+                                <img src="/buz_inventory_delivery_report/static/img/LOGO%20MOGEN.png"
                                      style="width: 180px; height: auto; object-fit: contain;" alt="Company Logo"/>
                             </div>
                         </div>
@@ -131,13 +133,13 @@
                             <div class="row mb-3" style="margin-top: -130px;">
                                <div class="col-4 offset-4 text-center">
                                    <div class="doc-title" style="padding: 14px; font-size: 26px;">
-                                    ใบขออนุมัติเปลี่ยนสินค้า
+                                    ใบคืนสินค้าเคลม
                                    </div>
                                </div>
                                <div class="col-4 text-end" style="">
                                   <div style="font-size: 18px;">
                                       <span>เลขที่: </span>
-                                      <span t-esc="o.claim_number"/>
+                                      <span t-esc="o.name"/>
                                   </div>
                                   <div style="width: 5cm; height: 1cm; border: 1px solid black; display: flex; flex-direction: column; float: right; margin-bottom: 0;">
                                       <!-- ช่องบน -->
@@ -156,31 +158,34 @@
 
 
 
-                         <div style="height: 5px;"></div>
+                         <div style="height: 38px;"></div>
                          <div style="display: flex; width: 100%; font-size: 18px; border: 1px solid black;">
                             <!-- กล่องที่ 1: 35% -->
                             <div style="width: 35%; border-right: 1px solid black; padding: 8px;">
                                 <div><strong>รายละเอียดลูกค้า</strong></div>
-                                <hr style="margin: 4px 0; border: 1px solid black;"/>
-                                <div>ชื่อลูกค้า: <t t-esc="o.partner_id.name or o.requester_name or ''"/></div>
+                                <hr style="margin: 4px 0; border: 1px solid black;">
+                                <div>ชื่อลูกค้า: <t t-esc="o.partner_id.name"/></div>
                                 <div style="margin: 0;">
                                     <strong>ที่อยู่:</strong>
-                                    <span t-esc="(o.partner_id and o.partner_id.contact_address) or o.service_address or ''"/>
+                                    <span t-esc="o.partner_id.street or ''"/>
+                                    <span t-esc="o.partner_id.street2 or ''"/>
+                                    <span t-esc="(o.partner_id.city or '') + ' ' + (o.partner_id.state_id.name or '') + ' ' + (o.partner_id.zip or '')"/>
+                                    <span t-esc="o.partner_id.country_id.name or ''"/>
                                 </div>
-                                <div>โทร: <t t-esc="(o.partner_id and (o.partner_id.phone or o.partner_id.mobile)) or o.requester_phone or ''"/></div>
+                                </hr>
                             </div>
 
                             <!-- กล่องที่ 2: 30% -->
                             <div style="width: 30%; border-right: 1px solid black; padding: 8px; text-align: center;">
                             <div><strong>ประเภทลูกค้า</strong></div>
-                            <hr style="margin: 1px 0; border: 1px solid black;"/>
+                            <hr style="margin: 1px 0; border: 1px solid black;">
 
                             <!-- Retail / Project -->
                             <div style="display: flex; margin-bottom: 1px;">
                                 <div style="width: 50%; border-right: 1px solid black; font-size: 15px;">Retail</div>
                                 <div style="width: 50%; font-size: 15px;">Project</div>
                             </div>
-                            <hr style="margin: 1px 0; border: 1px solid black;"/>
+                            <hr style="margin: 1px 0; border: 1px solid black;">
 
                             <!-- Dealer / Project / Dealer / Project -->
                             <div style="display: flex; margin-bottom: 1px;">
@@ -189,7 +194,7 @@
                                 <div style="width: 25%; border-right: 1px solid black; font-size: 15px;">Dealer</div>
                                 <div style="width: 25%; font-size: 15px;">Project</div>
                             </div>
-                            <hr style="margin: 1px 0; border: 1px solid black;"/>
+                            <hr style="margin: 1px 0; border: 1px solid black;">
 
                                 <!-- พื้นที่ว่าง 50% ล่าง พร้อมช่องแบ่ง -->
                                 <div style="margin-top: 10px; height: 55px; 
@@ -199,31 +204,34 @@
                                     <div style="width: 25%; border-right: 1px solid black;"></div>
                                     <div style="width: 25%;"></div>
                                 </div>
+                                </hr>
+                                </hr>
+                                </hr>
                             </div>
 
                             <!-- กล่องที่ 3: 35% ขวาสุด -->
                             <div style="width: 35%; padding: 8px;">
-                                <div>วันที่แจ้ง: <t t-esc="o.request_date.strftime('%d/%m/%Y') if o.request_date else ''"/></div>
-                                <div>วันที่เข้าบริการ: <t t-esc="o.service_date.strftime('%d/%m/%Y') if o.service_date else ''"/></div>
-                                <div>เลขที่ใบรับประกัน: <t t-esc="o.warranty_no or ''"/></div>
-                                <div>ซื้อผ่านร้าน: <t t-esc="o.shop_name or ''"/></div>
-                                <div>ผู้แจ้ง: <t t-esc="o.informer_name or ''"/></div>
+                                <div>วันที่เอกสาร: <t t-esc="o.date.strftime('%d/%m/%Y') if o.date else ''"/></div>
+                                <div>วันที่ดำเนินการ: <t t-esc="o.date_done.strftime('%d/%m/%Y') if o.date_done else ''"/></div>
+                                <div>ผู้ติดต่อพนักงาน: <t t-esc="o.employee_contact_id.name or ''"/></div>
+                                <div>Sale ผู้ดูแล: <t t-esc="o.employee_contact_id.name or ''"/></div>
+                                <div>สถานที่รับกลับ: <t t-esc="o.note or ''"/></div>
                             </div>
                         </div>
 
 
 
+                        <t t-set="line_number" t-value="1"/>
                         <table style="width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 16px; text-align: center; margin-top: 10px;">
                             <thead>
                                 <!-- แถวที่ 1 -->
                                 <tr>
                                     <th style="width: 3%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">ลำดับ</th>
-                                    <th style="width: 7%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">รหัสสินค้า</th>
-                                    <th style="width: 20%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">ชื่อสินค้า</th>
+                                    <th style="width: 15%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">รหัสสินค้า</th>
+                                    <th style="width: 30%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">ชื่อสินค้า</th>
+                                    <th style="width: 6%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">วันที่จัดส่ง</th>
+                                    <th style="width: 7%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">Service No.</th>
                                     <th style="width: 6%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">จำนวน</th>
-                                    <th style="width: 7%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">รหัสสินค้าที่เปลี่ยน</th>
-                                    <th style="width: 20%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">ชื่อสินค้าที่เปลี่ยน</th>
-                                    <th style="width: 7%; border: 1px solid black; text-align: center; vertical-align: middle;" rowspan="3">ค่าบริการเพื่มเติม</th>
                                     <th style="width: 30%; border: 1px solid black;" colspan="8">สภาพสินค้า</th>
                                 </tr>
                         
@@ -249,26 +257,23 @@
                             <tbody>
                                 <t t-set="line_number" t-value="((page_number - 1) * 7) + 1"/>
                                 <t t-set="current_line_number" t-value="line_number"/>
-                                <t t-foreach="group" t-as="line">
-                                <tr style="height: 30px;">
-                                    <td style="border: 1px solid black; padding: 2px 3px;" t-esc="current_line_number"/>
+                                <t t-foreach="group" t-as="move">
+                                <tr style="padding-top:0px; padding-bottom:0px;">
+                                    <td style="border: 1px solid black; padding: 2px 3px;" t-esc="line_number"/>
                                     <td style="border: 1px solid black; padding: 2px 3px;">
-                                        <t t-esc="line.product_id.default_code or ''"/>
+                                        <t t-esc="move.product_id.default_code or ''"/>
                                     </td>
                                     <td style="border: 1px solid black; padding: 2px 3px;">
-                                        <t t-esc="line.description or line.product_id.display_name or ''"/>
+                                        <t t-esc="move.product_id.name or ''"/>
                                     </td>
                                     <td style="border: 1px solid black; padding: 2px 3px;">
-                                        <t t-esc="'%.0f' % line.quantity"/>
+                                        <t t-esc="move.date.strftime('%d/%m/%Y') if move.date else ''"/>
                                     </td>
                                     <td style="border: 1px solid black; padding: 2px 3px;">
-                                        <t t-esc="line.replacement_product_id.default_code or ''"/>
+                                        <t t-esc="o.origin or ''"/>
                                     </td>
                                     <td style="border: 1px solid black; padding: 2px 3px;">
-                                        <t t-esc="line.replacement_product_id.display_name or ''"/>
-                                    </td>
-                                    <td style="border: 1px solid black; padding: 2px 3px;">
-                                        <t t-esc="'{:,.2f}'.format(line.price_unit) if line.price_unit else ''"/>
+                                        <t t-esc="'%.0f' % move.product_uom_qty"/>
                                     </td>
                                     <td style="border: 1px solid black; padding: 2px 3px;"></td>
                                     <td style="border: 1px solid black; padding: 2px 3px;"></td>
@@ -279,15 +284,14 @@
                                     <td style="border: 1px solid black; padding: 2px 3px;"></td>
                                     <td style="border: 1px solid black; padding: 2px 3px;"></td>
                                 </tr>
-                                <t t-set="current_line_number" t-value="current_line_number + 1"/>
+                                <t t-set="line_number" t-value="line_number + 1"/>
                                            </t>
 
                                            <!-- เติมแถวเปล่าให้ครบ 7 แถวต่อหน้า -->
-                                           <t t-if="len(group) &lt; 7">
+                                           <t t-if="len(group) == 7">
                                             <t t-set="empty_rows" t-value="7 - len(group)"/>
                                             <t t-foreach="range(empty_rows)" t-as="i">
-                                                <tr style="height: 30px;">
-                                                    <td style="border: 1px solid black;"></td>
+                                                <tr class="data-row" style="height: 50px;">
                                                     <td style="border: 1px solid black;"></td>
                                                     <td style="border: 1px solid black;"></td>
                                                     <td style="border: 1px solid black;"></td>
@@ -309,7 +313,7 @@
                                    </table>
 
                                      <!-- หมายเหตุ -->
-                                  <div style="padding: 15px; font-size: 20px;  margin-top: 5px; line-height: 1.6;">
+                                  <div style="padding: 15px; font-size: 20px;  margin-top: 10px; line-height: 1.6;">
                                     <strong>หมายเหตุ: </strong>
                                     <div t-if="o.note" style="margin-top: 10px; margin-left: 10px;">
                                         <span t-field="o.note"/>
@@ -347,7 +351,7 @@
                                             <span style="display: inline-block; border-bottom: 1px solid black; width: 90px;"></span>
                                         </div>
                                         <div style="margin-top: 5px; font-size: 13px;">
-                                            ผจก./หัวหน้า บริการเทคนิค<br/>ผอ.กต. , MD.
+                                            ผจก./หัวหน้า บริการเทคนิค<br/>ผอ.กต.
                                         </div>
                                         <div style="margin-top: 5px;">วันที่ <span style="display: inline-block; border-bottom: 1px solid black; width: 80px;"></span></div>
                                     </div>
@@ -382,6 +386,8 @@
                                 </div>
 
                                 <div style="position: relative; min-height: 20mm; padding-bottom: 15mm;">
+                                    <!-- เนื้อหาหน้านั้น ๆ เช่น ตาราง หรือข้อความอื่น ๆ -->
+            
                                     <!-- Footer fixed bottom -->
                                     <div style="
                                       position: absolute;
@@ -393,32 +399,51 @@
                                       page-break-inside: avoid;
                                       ">
                                       <div>
-                                        <p style="margin: 0;">อนุมัติใช้วันที่ 1/6/2564</p>
+                                        <p style="margin: 0;">อนุมัติใช้วันที่ 14/09/2563</p>
                                       </div>
                                       <div>
-                                        <p style="margin: 0; text-align: right;">FM-SRV-20&#160; Rev.00</p>
+                                        <p style="margin: 0; text-align: right;">FM-PUR-08.REV.01</p>
                                      </div>
                                     </div>
                                   </div>
 
+                                
+
+
+
                              </div>
-                             <t t-set="page_number" t-value="page_number + 1"/>
                        </t>
                     </div>
-                </t>     
-            </t> </t>               
+                               <t t-set="page_number" t-value="page_number + 1"/></t>
+
+                                   <!-- เงื่อนไขแสดงลายเซ็นเฉพาะหน้าสุดท้าย -->
+                                   <t t-if="page_number == len(groups_of_7)">
+                                       <!-- ลายเซ็นหรือหมายเหตุ -->
+                                   </t>
+
+
+                           
+                          
+
+                     
+                    
+                    </div>
+                              
+             </t>     
+           </t> </t>               
       </template>
   
   
-      <record id="action_report_service_claim" model="ir.actions.report">
-          <field name="name">Service Claim</field>
-          <field name="model">service.receipt</field>
+      <record id="action_request_change_products_claim" model="ir.actions.report">
+          <field name="name">ใบคืนสินค้าเคลม</field>
+          <field name="model">stock.picking</field>
           <field name="report_type">qweb-pdf</field>
-          <field name="report_name">buz_service_receipt.report_service_claim_document</field>
-          <field name="report_file">buz_service_receipt.report_service_claim_document</field>
-          <field name="print_report_name">'Claim - %s' % (object.claim_number or object.name)</field>
-          <field name="binding_model_id" ref="model_service_receipt"/>
+          <field name="report_name">buz_inventory_delivery_report.request_change_products_claim_document</field>
+          <field name="report_file">buz_inventory_delivery_report.request_change_products_claim_document</field>
+          <field name="print_report_name">'Claim Return Report - %s' % object.name</field>
+          <field name="binding_model_id" ref="stock.model_stock_picking"/>
           <field name="binding_type">report</field>
-          <field name="paperformat_id" ref="paperformat_service_claim"/>
+          <field name="paperformat_id" ref="paperformat_request_change_products_claim"/>
       </record>
   </odoo>
+  

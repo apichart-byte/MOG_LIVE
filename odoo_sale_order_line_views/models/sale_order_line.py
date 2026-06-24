@@ -41,6 +41,33 @@ class SaleOrderLine(models.Model):
         help='Quantity reserved in stock for this line',
     )
 
+    project_name = fields.Char(
+        related="order_id.project_name",
+        string="Project Name",
+    )
+    partner_shipping_id = fields.Many2one(
+        related="order_id.partner_shipping_id",
+        string="Delivery Address",
+    )
+    sku = fields.Char(
+        string="Default code",
+        related="product_id.default_code",
+        help='Default code/Internal Reference of the product',
+    )
+
+    date_done = fields.Date(
+        string="Delivery Date",
+        compute='_compute_date_done',
+        store=True,
+    )
+
+    @api.depends('move_ids.picking_id.date_done')
+    def _compute_date_done(self):
+        for line in self:
+            dates = line.move_ids.picking_id.mapped('date_done')
+            dates = [d for d in dates if d]
+            line.date_done = max(dates).date() if dates else False
+
     @api.depends('move_ids.state', 'move_ids.quantity', 'move_ids.product_uom')
     def _compute_reserve_qty(self):
         for line in self:
