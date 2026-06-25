@@ -37,13 +37,15 @@ class ReportDPExcel(models.AbstractModel):
     def _get_delivery_data(self, sale_order):
         data = self.env.context.get("xlsx_export_data") or {}
         do_status = data.get("do_status")
+        only_with_dispatch_doc = data.get("only_with_dispatch_doc")
         pickings = sale_order.picking_ids
         if do_status:
             if do_status == 'return':
                 pickings = pickings.filtered(lambda p: p.picking_type_code == 'incoming')
             else:
                 pickings = pickings.filtered(lambda p: p.state == do_status and p.picking_type_code == 'outgoing')
-        pickings = pickings.filtered(lambda p: p.buz_dispatch_document_ids)
+        if only_with_dispatch_doc:
+            pickings = pickings.filtered(lambda p: p.buz_dispatch_document_ids)
         return {
             "do_no": ", ".join(filter(None, pickings.mapped("name"))),
             "scheduled_date": ", ".join(
@@ -60,6 +62,7 @@ class ReportDPExcel(models.AbstractModel):
         date_from = data.get("date_from")
         date_to = data.get("date_to")
         do_status = data.get("do_status")
+        only_with_dispatch_doc = data.get("only_with_dispatch_doc")
         
         pickings = sale_order.picking_ids
         if do_status:
@@ -67,7 +70,8 @@ class ReportDPExcel(models.AbstractModel):
                 pickings = pickings.filtered(lambda p: p.picking_type_code == 'incoming')
             else:
                 pickings = pickings.filtered(lambda p: p.state == do_status and p.picking_type_code == 'outgoing')
-        pickings = pickings.filtered(lambda p: p.buz_dispatch_document_ids)
+        if only_with_dispatch_doc:
+            pickings = pickings.filtered(lambda p: p.buz_dispatch_document_ids)
 
         if not (date_from and date_to):
             return pickings
