@@ -7,7 +7,8 @@ class SaleOrderLine(models.Model):
         string="Standard Cost (Sales)",
         compute='_compute_standard_cost_purchase_price',
         store=True,
-        digits='Product Price'
+        digits='Product Price',
+        precompute=True
     )
     
     # Override purchase_price to use standard cost from pricelist

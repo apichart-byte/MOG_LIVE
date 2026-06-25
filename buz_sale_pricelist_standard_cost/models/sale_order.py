@@ -12,16 +12,17 @@ class SaleOrder(models.Model):
         currency_field='currency_id'
     )
     
-    @api.depends('order_line.purchase_price', 'order_line.product_uom_qty', 'order_line.price_subtotal')
+    @api.depends('order_line.margin', 'amount_untaxed')
     def _compute_margin(self):
         for order in self:
             order.margin = sum(order.order_line.mapped('margin'))
+            order.margin_percent = order.amount_untaxed and order.margin / order.amount_untaxed
 
     def action_confirm(self):
         # Validation checks
         get_param = self.env['ir.config_parameter'].sudo().get_param
         min_margin = float(get_param('sale_pricelist_standard_cost.minimum_margin_percent', default=0.0))
-        block_negative = get_param('sale_pricelist_standard_cost.block_negative_margin')
+        block_negative = get_param('sale_pricelist_standard_cost.block_negative_margin') == 'True'
         
         for order in self:
             # Check Global Margin

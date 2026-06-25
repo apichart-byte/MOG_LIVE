@@ -215,23 +215,16 @@ class EtaxTransaction(models.Model):
             pickings = self.env['stock.picking']
             
             if record.sale_order_ref:
-                # กรณีมี sale order reference - ดึง Delivery Orders ทั้งหมดจาก sale order
-                # ค้นหาจาก picking_ids ของ sale order (รวมทุก type: incoming, outgoing, internal)
                 all_pickings = record.sale_order_ref.picking_ids
-                
-                # ถ้าไม่พบจาก picking_ids ให้ค้นหาจาก origin
                 if not all_pickings:
                     all_pickings = self.env['stock.picking'].search([
                         ('origin', '=', record.sale_order_ref.name)
                     ])
-                
-                # กรองเฉพาะรายการที่ไม่ใช่ draft หรือ cancelled (แสดงทั้ง incoming และ outgoing)
                 pickings = all_pickings.filtered(
                     lambda p: p.state not in ('draft', 'cancel')
                 )
                 
             elif record.partner_id:
-                # กรณีมีแค่ customer แต่ไม่มี sale order - แสดงทุก type
                 pickings = self.env['stock.picking'].search([
                     ('partner_id', '=', record.partner_id.id),
                     ('state', 'not in', ('draft', 'cancel'))
@@ -437,7 +430,7 @@ class EtaxTransaction(models.Model):
                 # "H13-BUYER_ORDER_ISSUE_DTM": self.selected_delivery_id.name or "", # วันที่ใบสั่งซื้อ [T03]
                 "H13-BUYER_ORDER_ISSUE_DTM": "",
                 "H14-BUYER_ORDER_REF_TYPE_CODE": "",
-                "H15-DOCUMENT_REMARK": self.selected_delivery_id.name or "", #self.notes, # หมายเหตุ [T03, CN, DN]
+                "H15-DOCUMENT_REMARK": self.selected_delivery_id.buz_dispatch_document_name or self.selected_delivery_id.name or "", #self.notes, # หมายเหตุ [T03, CN, DN]
                 "H16-VOUCHER_NO": "",
                 "H17-SELLER_CONTACT_PERSON_NAME": "",
                 "H18-SELLER_CONTACT_DEPARTMENT_NAME": "",
