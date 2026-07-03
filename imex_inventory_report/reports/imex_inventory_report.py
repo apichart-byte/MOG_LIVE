@@ -9,6 +9,9 @@ class ImexInventoryReport(models.Model):
     _auto = False
 
     product_id = fields.Many2one(comodel_name="product.product", readonly=True)
+    default_code = fields.Char(
+        related="product_id.default_code", string="Internal Reference",
+        readonly=True, store=False)
     product_uom = fields.Many2one(comodel_name="uom.uom", readonly=True)
     product_category = fields.Many2one(
         comodel_name="product.category", readonly=True)
@@ -21,6 +24,27 @@ class ImexInventoryReport(models.Model):
     product_out_amount = fields.Float(readonly=True)
     balance = fields.Float(readonly=True)
     amount = fields.Float(readonly=True)
+
+    def init(self):
+        tools.drop_view_if_exists(self.env.cr, self._table)
+        self.env.cr.execute("""CREATE or REPLACE VIEW %s as (
+            SELECT 
+                0 as id,
+                0 as product_id,
+                0 as product_uom,
+                0 as product_category,
+                0 as location,
+                0.0 as initial,
+                0.0 as initial_amount,
+                0.0 as product_in,
+                0.0 as product_in_amount,
+                0.0 as product_out,
+                0.0 as product_out_amount,
+                0.0 as balance,
+                0.0 as amount
+            FROM product_product
+            LIMIT 0
+        )""" % self._table)
 
     # TODO: need a field to help these cases more clearly
     # case 1: location set
@@ -169,8 +193,15 @@ class ImexInventoryReport(models.Model):
                             move.product_qty,
                             svl.unit_cost
                         FROM stock_move move
-                            LEFT JOIN stock_valuation_layer svl 
-                                on move.id = svl.stock_move_id
+                            LEFT JOIN (
+                                SELECT stock_move_id,
+                                       CASE WHEN SUM(ABS(quantity)) > 0
+                                            THEN SUM(ABS(value)) / SUM(ABS(quantity))
+                                            ELSE 0 END as unit_cost
+                                FROM stock_valuation_layer
+                                WHERE quantity != 0
+                                GROUP BY stock_move_id
+                            ) svl on move.id = svl.stock_move_id
                             LEFT JOIN stock_location location_src 
                                 on move.location_id = location_src.id
                             LEFT JOIN product_product product 
@@ -195,8 +226,15 @@ class ImexInventoryReport(models.Model):
                             move.product_qty,
                             svl.unit_cost
                         FROM stock_move move
-                            LEFT JOIN stock_valuation_layer svl 
-                                on move.id = svl.stock_move_id
+                            LEFT JOIN (
+                                SELECT stock_move_id,
+                                       CASE WHEN SUM(ABS(quantity)) > 0
+                                            THEN SUM(ABS(value)) / SUM(ABS(quantity))
+                                            ELSE 0 END as unit_cost
+                                FROM stock_valuation_layer
+                                WHERE quantity != 0
+                                GROUP BY stock_move_id
+                            ) svl on move.id = svl.stock_move_id
                             LEFT JOIN stock_location location_dest 
                                 on move.location_dest_id = location_dest.id
                             LEFT JOIN product_product product 
@@ -291,8 +329,15 @@ class ImexInventoryReport(models.Model):
                             THEN move.product_qty*svl.unit_cost 
                             ELSE 0 END) as product_out_amount
                     FROM stock_move move
-                        LEFT JOIN stock_valuation_layer svl 
-                            on move.id = svl.stock_move_id
+                        LEFT JOIN (
+                            SELECT stock_move_id,
+                                   CASE WHEN SUM(ABS(quantity)) > 0
+                                        THEN SUM(ABS(value)) / SUM(ABS(quantity))
+                                        ELSE 0 END as unit_cost
+                            FROM stock_valuation_layer
+                            WHERE quantity != 0
+                            GROUP BY stock_move_id
+                        ) svl on move.id = svl.stock_move_id
                         LEFT JOIN stock_location location 
                             on move.location_id = location.id
                         LEFT JOIN stock_location location_dest 

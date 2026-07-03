@@ -50,9 +50,21 @@ class SaleOrderLine(models.Model):
         string="Delivery Address",
     )
     sku = fields.Char(
-        string="Default code",
-        related="product_id.default_code",
-        help='Default code/Internal Reference of the product',
+        string="SKU",
+        related="product_id.sku",
+        help='Stock Keeping Unit',
+    )
+
+    create_date_only = fields.Date(
+        string="Create Date",
+        compute='_compute_create_date_only',
+        store=True,
+    )
+
+    forecast_expected_date_only = fields.Date(
+        string="Forecast Expected Date",
+        compute='_compute_forecast_expected_date_only',
+        store=True,
     )
 
     date_done = fields.Date(
@@ -61,6 +73,28 @@ class SaleOrderLine(models.Model):
         store=True,
     )
 
+    is_pending_delivery = fields.Boolean(
+        string="Pending Delivery",
+        compute='_compute_is_pending_delivery',
+        store=True,
+    )
+
+    picking_scheduled_date = fields.Date(
+        string="Scheduled Date",
+        compute='_compute_picking_scheduled_date',
+        store=True,
+    )
+
+    @api.depends('create_date')
+    def _compute_create_date_only(self):
+        for line in self:
+            line.create_date_only = line.create_date.date() if line.create_date else False
+
+    @api.depends('forecast_expected_date')
+    def _compute_forecast_expected_date_only(self):
+        for line in self:
+            line.forecast_expected_date_only = line.forecast_expected_date.date() if line.forecast_expected_date else False
+
     @api.depends('move_ids.picking_id.date_done')
     def _compute_date_done(self):
         for line in self:
@@ -68,14 +102,32 @@ class SaleOrderLine(models.Model):
             dates = [d for d in dates if d]
             line.date_done = max(dates).date() if dates else False
 
-    @api.depends('move_ids.state', 'move_ids.quantity', 'move_ids.product_uom')
+    @api.depends('move_ids.picking_id.scheduled_date')
+    def _compute_picking_scheduled_date(self):
+        for line in self:
+            dates = line.move_ids.picking_id.mapped('scheduled_date')
+            dates = [d for d in dates if d]
+            line.picking_scheduled_date = max(dates).date() if dates else False
+
+    @api.depends('move_ids.state', 'move_ids.quantity', 'move_ids.product_uom',
+                 'move_ids.location_dest_id')
     def _compute_reserve_qty(self):
         for line in self:
             reserved = 0.0
             for move in line.move_ids.filtered(
                 lambda m: m.state in ('assigned', 'partially_available')
+                and m.location_dest_id.usage == 'customer'
+                and (not m.origin_returned_move_id or m.to_refund)
             ):
                 reserved += move.product_uom._compute_quantity(
                     move.quantity, line.product_uom
                 )
             line.reserve_qty = reserved
+
+    @api.depends('state', 'product_uom_qty', 'qty_delivered')
+    def _compute_is_pending_delivery(self):
+        for line in self:
+            line.is_pending_delivery = (
+                line.state == 'sale'
+                and line.product_uom_qty > line.qty_delivered
+            )

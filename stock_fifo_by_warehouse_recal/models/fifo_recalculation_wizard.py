@@ -2,7 +2,7 @@
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
-from collections import defaultdict, deque
+from collections import defaultdict
 from datetime import datetime
 import io
 import base64
@@ -12,9 +12,7 @@ try:
 except ImportError:
     xlsxwriter = None
 import logging
-import traceback
 
-_logger = logging.getLogger(__name__)
 
 
 class FifoRecalculationWizard(models.TransientModel):
@@ -426,9 +424,7 @@ class FifoRecalculationWizard(models.TransientModel):
             layer_domain = [
                 ('product_id', '=', product_id),
                 ('company_id', '=', self.company_id.id),
-                '|',
                 ('locked', '=', False),
-                ('locked', '=', None),
             ]
             if warehouse_id:
                 layer_domain.append(('warehouse_id', '=', warehouse_id))
@@ -476,7 +472,7 @@ class FifoRecalculationWizard(models.TransientModel):
         Does not write to database.
         """
         # In-memory FIFO queue: list of dicts {'qty': x, 'unit_cost': y, 'value': z}
-        fifo_queue = deque()
+        fifo_queue = []
         
         for move in moves:
             # Classify move and get cost
@@ -503,7 +499,7 @@ class FifoRecalculationWizard(models.TransientModel):
                         # Consume entire layer
                         qty_to_consume -= layer['qty']
                         log.append(f"      Consumed layer: {layer['qty']} units @ {layer['unit_cost']}")
-                        fifo_queue.popleft()
+                        fifo_queue.pop(0)
                     else:
                         # Partial consumption
                         layer['qty'] -= qty_to_consume
@@ -520,7 +516,7 @@ class FifoRecalculationWizard(models.TransientModel):
         
         return total_qty, total_value
 
-    def _classify_move_and_get_cost(self, move, warehouse_id):
+    def _classify_move_and_get_cost(self, move, warehouse_id, cost_cache=None):
         """
         Classify stock move as 'in' or 'out' and calculate cost.
         Uses proper FIFO valuation logic.
@@ -553,12 +549,17 @@ class FifoRecalculationWizard(models.TransientModel):
         # 2. Customer returns
         if location_from_usage == 'customer' and location_to_usage == 'internal':
             qty = move.product_uom_qty
-            # Try to get cost from existing layer
-            existing_layer = self.env['stock.valuation.layer'].search([
-                ('stock_move_id', '=', move.id),
-                ('quantity', '>', 0)
-            ], limit=1)
-            unit_cost = existing_layer.unit_cost if existing_layer else product.standard_price
+            unit_cost = 0
+            # Check cost_cache first (apply phase, old SVLs deleted)
+            if cost_cache and move.id in cost_cache:
+                unit_cost = cost_cache[move.id]
+            else:
+                # Preview phase: read the move's own positive SVL
+                existing_layer = self.env['stock.valuation.layer'].search([
+                    ('stock_move_id', '=', move.id),
+                    ('quantity', '>', 0)
+                ], limit=1)
+                unit_cost = existing_layer.unit_cost if existing_layer else product.standard_price
             return 'in', qty, unit_cost, qty * unit_cost
         
         # 3. Inter-warehouse transfer RECEIPT (positive layer at dest)
@@ -566,25 +567,46 @@ class FifoRecalculationWizard(models.TransientModel):
             if source_wh and dest_wh and source_wh.id != dest_wh.id:
                 if move_warehouse and move_warehouse.id == dest_wh.id:
                     qty = move.product_uom_qty
-                    # Get cost from source warehouse's negative layer
-                    source_layer = self.env['stock.valuation.layer'].search([
-                        ('stock_move_id', '=', move.id),
-                        ('warehouse_id', '=', source_wh.id),
-                        ('quantity', '<', 0)
-                    ], limit=1)
-                    unit_cost = abs(source_layer.unit_cost) if source_layer else product.standard_price
+                    unit_cost = 0
+                    # Check cost_cache first (apply phase, old SVLs deleted)
+                    if cost_cache and move.id in cost_cache:
+                        unit_cost = cost_cache[move.id]
+                    else:
+                        # Preview phase: find cost from existing negative SVL.
+                        # Priority 1: the move's OWN negative SVL (direct internal→internal transfer)
+                        # Don't filter by warehouse_id — standard Odoo may create it without one
+                        source_layer = self.env['stock.valuation.layer'].search([
+                            ('stock_move_id', '=', move.id),
+                            ('quantity', '<', 0)
+                        ], limit=1)
+                        # Priority 2: chained transit IWTs — receipt move != shipment move,
+                        # so look up the shipment move's SVL via move_orig_ids
+                        if not source_layer:
+                            shipment_moves = move.move_orig_ids.filtered(lambda m: m.state == 'done')
+                            if shipment_moves:
+                                source_layer = self.env['stock.valuation.layer'].search([
+                                    ('stock_move_id', '=', shipment_moves[0].id),
+                                    ('warehouse_id', '=', source_wh.id),
+                                    ('quantity', '<', 0)
+                                ], limit=1)
+                        unit_cost = abs(source_layer.unit_cost) if source_layer else product.standard_price
                     return 'in', qty, unit_cost, qty * unit_cost
         
         # 4. Return moves (positive layer at destination)
         if move.origin_returned_move_id and location_to_usage == 'internal' and dest_wh:
             if move_warehouse and move_warehouse.id == dest_wh.id:
                 qty = move.product_uom_qty
-                # Get cost from original move
-                original_layer = self.env['stock.valuation.layer'].search([
-                    ('stock_move_id', '=', move.origin_returned_move_id.id),
-                    ('quantity', '<', 0)
-                ], limit=1)
-                unit_cost = abs(original_layer.unit_cost) if original_layer else product.standard_price
+                unit_cost = 0
+                # Check cost_cache first (apply phase, old SVLs deleted)
+                if cost_cache and move.id in cost_cache:
+                    unit_cost = cost_cache[move.id]
+                else:
+                    # Preview phase: read the original move's negative SVL
+                    original_layer = self.env['stock.valuation.layer'].search([
+                        ('stock_move_id', '=', move.origin_returned_move_id.id),
+                        ('quantity', '<', 0)
+                    ], limit=1)
+                    unit_cost = abs(original_layer.unit_cost) if original_layer else product.standard_price
                 return 'in', qty, unit_cost, qty * unit_cost
         
         # OUTGOING MOVES (negative layers, consume FIFO)
@@ -646,16 +668,6 @@ class FifoRecalculationWizard(models.TransientModel):
         log.append(f"User: {self.env.user.name}")
         log.append("")
         
-        # Fix NULL locked fields first
-        log.append("=== Fixing NULL locked fields ===")
-        try:
-            fixed_count = self._fix_null_locked_fields()
-            log.append(f"Fixed {fixed_count} layers with locked=NULL")
-            log.append("")
-        except Exception as e:
-            log.append(f"WARNING: Failed to fix NULL locked fields: {str(e)}")
-            log.append("")
-        
         try:
             backup = self._create_backup()
             log.append(f"Backup created: {backup.name}")
@@ -709,6 +721,12 @@ class FifoRecalculationWizard(models.TransientModel):
         
         moves = self.env['stock.move'].search(move_domain, order='date, id')
         groups = self._group_moves_by_product_warehouse(moves)
+        # Pre-build cost cache for IWT receipt moves (before deletion)
+        # During preview, old SVLs exist; during apply they're deleted before recreation.
+        # Cache links each IWT receipt move to its shipment's FIFO consumption cost.
+        cost_cache = self._build_cost_cache(groups)
+        log.append(f"Cost cache built for {len(cost_cache)} IWT receipt moves")
+        
         
         # Process in batches
         deleted_count = 0
@@ -744,7 +762,7 @@ class FifoRecalculationWizard(models.TransientModel):
             }
             
             # Recreate layers for this batch
-            batch_created = self._recreate_layers_for_groups(batch_groups, log)
+            batch_created = self._recreate_layers_for_groups(batch_groups, log, cost_cache=cost_cache)
             created_count += batch_created
             log.append(f"  Batch deleted: {batch_deleted} layers, created: {batch_created} layers")
             log.append("")
@@ -794,9 +812,7 @@ class FifoRecalculationWizard(models.TransientModel):
             layer_domain = [
                 ('product_id', '=', product_id),
                 ('company_id', '=', self.company_id.id),
-                '|',
                 ('locked', '=', False),
-                ('locked', '=', None),
             ]
             
             if warehouse_id:
@@ -818,21 +834,22 @@ class FifoRecalculationWizard(models.TransientModel):
                 log.append(f"  Deleting {len(old_layers)} layers for {product.display_name} @ {warehouse.name if warehouse else 'N/A'}")
                 
                 # CRITICAL: Delete related stock.valuation.layer.usage records first
-                # to avoid foreign key constraint violation
-                usage_records = self.env['stock.valuation.layer.usage'].search([
-                    ('stock_valuation_layer_id', 'in', old_layers.ids)
-                ])
-                if usage_records:
-                    log.append(f"    Deleting {len(usage_records)} related usage records")
-                    usage_records.unlink()
+                # Only attempt if the usage model exists (may not be installed)
+                if 'stock.valuation.layer.usage' in self.env:
+                    usage_records = self.env['stock.valuation.layer.usage'].search([
+                        ('stock_valuation_layer_id', 'in', old_layers.ids)
+                    ])
+                    if usage_records:
+                        log.append(f"    Deleting {len(usage_records)} related usage records")
+                        usage_records.unlink()
                 
                 # Now safe to delete the layers
-                old_layers.sudo().unlink()
+                old_layers.unlink()
                 deleted_count += len(old_layers)
         
         return deleted_count
 
-    def _recreate_layers_for_groups(self, groups, log):
+    def _recreate_layers_for_groups(self, groups, log, cost_cache=None):
         """
         Recreate valuation layers for each product-warehouse group.
         Actually writes to database (unlike _rebuild_fifo_for_group).
@@ -848,11 +865,10 @@ class FifoRecalculationWizard(models.TransientModel):
             log.append(f"  Recreating layers for {product.display_name} @ {warehouse.name if warehouse else 'N/A'}")
             
             # FIFO queue for actual layer creation
-            fifo_queue = deque()
-            group_created_count = 0
+            fifo_queue = []
             
             for move in moves:
-                move_type, qty, unit_cost, value = self._classify_move_and_get_cost(move, warehouse_id)
+                move_type, qty, unit_cost, value = self._classify_move_and_get_cost(move, warehouse_id, cost_cache=cost_cache)
                 
                 if move_type == 'in':
                     # Create IN layer
@@ -873,7 +889,7 @@ class FifoRecalculationWizard(models.TransientModel):
                         layer_vals['locked'] = True
                     
                     new_layer = SVL.create(layer_vals)
-                    group_created_count += 1
+                    created_count += 1
                     
                     # Add to memory queue for FIFO tracking
                     fifo_queue.append({
@@ -903,7 +919,7 @@ class FifoRecalculationWizard(models.TransientModel):
                             total_cost += consumed_value
                             
                             consumed_layers.append((layer['layer_id'], consumed_qty, consumed_value, 0, 0))
-                            fifo_queue.popleft()
+                            fifo_queue.pop(0)
                         else:
                             # Partial consumption
                             consumed_qty = qty_to_consume
@@ -953,43 +969,11 @@ class FifoRecalculationWizard(models.TransientModel):
                         layer_vals['locked'] = True
                     
                     SVL.create(layer_vals)
-                    group_created_count += 1
+                    created_count += 1
             
-            created_count += group_created_count
-            log.append(f"    Created {group_created_count} layers")
+            log.append(f"    Created {created_count} layers")
         
         return created_count
-
-    def _fix_null_locked_fields(self):
-        """Fix layers with locked=NULL by setting them to False."""
-        self.ensure_one()
-        
-        # Get affected product-warehouse combinations from preview lines
-        affected_combinations = set(
-            (line.product_id.id, line.warehouse_id.id if line.warehouse_id else False)
-            for line in self.line_ids
-        )
-        
-        fixed_count = 0
-        
-        # Fix locked=NULL for affected products
-        for product_id, warehouse_id in affected_combinations:
-            layer_domain = [
-                ('product_id', '=', product_id),
-                ('company_id', '=', self.company_id.id),
-                ('locked', '=', None),
-            ]
-            
-            if warehouse_id:
-                layer_domain.append(('warehouse_id', '=', warehouse_id))
-            
-            layers_to_fix = self.env['stock.valuation.layer'].search(layer_domain)
-            
-            if layers_to_fix:
-                layers_to_fix.write({'locked': False})
-                fixed_count += len(layers_to_fix)
-        
-        return fixed_count
 
     def _create_backup(self):
         """Create backup of layers before recalculation."""
@@ -1001,81 +985,31 @@ class FifoRecalculationWizard(models.TransientModel):
             for line in self.line_ids
         )
         
-        # IMPORTANT: Also include all explicitly selected products/warehouses
-        # even if they don't have moves in the date range
-        # This ensures we backup all layers for selected products
-        if self.product_ids:
-            # Add all combinations of selected products with selected/all warehouses
-            for product in self.product_ids:
-                if self.warehouse_ids:
-                    for warehouse in self.warehouse_ids:
-                        affected_combinations.add((product.id, warehouse.id))
-                else:
-                    # No warehouse filter - backup all warehouses for this product
-                    affected_combinations.add((product.id, False))
-        elif self.product_categ_ids:
-            # Add all products in selected categories
-            products = self.env['product.product'].search([
-                ('categ_id', 'child_of', self.product_categ_ids.ids)
-            ])
-            for product in products:
-                if self.warehouse_ids:
-                    for warehouse in self.warehouse_ids:
-                        affected_combinations.add((product.id, warehouse.id))
-                else:
-                    # No warehouse filter - backup all warehouses for this product
-                    affected_combinations.add((product.id, False))
-        
-        # Collect all layers that will be affected
-        # Even if we're not deleting, we need to backup because remaining_qty/value will change
+        # Collect all layers that will be deleted (use same logic as _delete_old_layers)
         all_layers_to_backup = self.env['stock.valuation.layer']
         
         for product_id, warehouse_id in affected_combinations:
             layer_domain = [
                 ('product_id', '=', product_id),
                 ('company_id', '=', self.company_id.id),
-                '|',
                 ('locked', '=', False),
-                ('locked', '=', None),
             ]
             
             if warehouse_id:
                 layer_domain.append(('warehouse_id', '=', warehouse_id))
             
-            # Backup layers based on deletion strategy
             if self.clear_old_layers == 'range':
-                # Backup only layers in date range that will be deleted
                 layer_domain.extend([
                     ('create_date', '>=', self.date_from),
                     ('create_date', '<=', self.date_to),
                 ])
-            elif self.clear_old_layers == 'all_product':
-                # Backup all layers for this product-warehouse (will all be deleted)
-                pass  # No additional filter needed
             elif self.clear_old_layers == 'none':
-                # Even if not deleting, backup existing layers because remaining values will change
-                # Backup all existing layers for accurate rollback
-                pass  # No additional filter needed
+                continue  # Skip if not deleting
             
             layers = self.env['stock.valuation.layer'].search(layer_domain)
             all_layers_to_backup |= layers
         
         layers_to_backup = all_layers_to_backup
-        
-        # Log what we're backing up
-        _logger.info(f"Backup: Found {len(affected_combinations)} product-warehouse combinations")
-        _logger.info(f"Backup: Total layers to backup: {len(layers_to_backup)}")
-        
-        # Group layers by product for logging
-        product_layer_count = {}
-        for layer in layers_to_backup:
-            product_name = layer.product_id.display_name
-            if product_name not in product_layer_count:
-                product_layer_count[product_name] = 0
-            product_layer_count[product_name] += 1
-        
-        for product_name, count in sorted(product_layer_count.items()):
-            _logger.info(f"Backup:   {product_name}: {count} layers")
         
         # Create backup record (even if no layers to backup, for audit trail)
         backup_vals = {
@@ -1089,81 +1023,40 @@ class FifoRecalculationWizard(models.TransientModel):
         # Log backup creation
         if not layers_to_backup:
             # No layers to backup (might be clear_old_layers='none')
-            _logger.warning("No layers found to backup!")
             return backup
         
-        _logger.info(f"Starting to create {len(layers_to_backup)} backup lines...")
-        
-        # Backup layer data - use batch creation for better performance
+        # Backup layer data
         backup_line_count = 0
-        failed_layers = []
-        backup_lines_vals = []
-        
         for layer in layers_to_backup:
             try:
-                line_vals = {
+                self.env['fifo.recalculation.backup.line'].create({
                     'backup_id': backup.id,
                     'layer_id': layer.id,
                     'product_id': layer.product_id.id,
                     'warehouse_id': layer.warehouse_id.id if layer.warehouse_id else False,
-                    'quantity': layer.quantity or 0.0,
-                    'unit_cost': layer.unit_cost or 0.0,
-                    'value': layer.value or 0.0,
-                    'remaining_qty': layer.remaining_qty or 0.0,
-                    'remaining_value': layer.remaining_value or 0.0,
+                    'quantity': layer.quantity,
+                    'unit_cost': layer.unit_cost,
+                    'value': layer.value,
+                    'remaining_qty': layer.remaining_qty,
+                    'remaining_value': layer.remaining_value,
                     'stock_move_id': layer.stock_move_id.id if layer.stock_move_id else False,
-                    'description': layer.description or '',
+                    'description': layer.description,
                     'layer_data': json.dumps({
                         'create_date': layer.create_date.isoformat() if layer.create_date else None,
                         'write_date': layer.write_date.isoformat() if layer.write_date else None,
                     }),
-                }
-                backup_lines_vals.append(line_vals)
+                })
+                backup_line_count += 1
             except Exception as e:
                 # Log error but continue with other layers
-                _logger.error(f"Failed to prepare backup for layer {layer.id} (Product: {layer.product_id.display_name}): {str(e)}")
-                _logger.error(traceback.format_exc())
-                failed_layers.append({
-                    'layer_id': layer.id,
-                    'product': layer.product_id.display_name,
-                    'error': str(e)
-                })
+                import logging
+                _logger = logging.getLogger(__name__)
+                _logger.error(f"Failed to backup layer {layer.id}: {str(e)}")
                 continue
-        
-        # Create all backup lines in batch
-        try:
-            if backup_lines_vals:
-                _logger.info(f"Creating {len(backup_lines_vals)} backup lines in batch...")
-                created_lines = self.env['fifo.recalculation.backup.line'].create(backup_lines_vals)
-                backup_line_count = len(created_lines)
-                _logger.info(f"Successfully created {backup_line_count} backup lines")
-        except Exception as e:
-            _logger.error(f"CRITICAL: Failed to create backup lines in batch: {str(e)}")
-            _logger.error(traceback.format_exc())
-            
-            # Fallback: Try creating one by one
-            _logger.info("Attempting to create backup lines one by one...")
-            for line_vals in backup_lines_vals:
-                try:
-                    self.env['fifo.recalculation.backup.line'].create(line_vals)
-                    backup_line_count += 1
-                except Exception as e2:
-                    layer_id = line_vals.get('layer_id', 'unknown')
-                    _logger.error(f"Failed to create backup line for layer {layer_id}: {str(e2)}")
-                    failed_layers.append({
-                        'layer_id': layer_id,
-                        'error': str(e2)
-                    })
         
         # Update backup with actual line count
         if backup_line_count != backup.layer_count:
             backup.write({'layer_count': backup_line_count})
-        
-        # Log failed layers if any
-        if failed_layers:
-            _logger.warning(f"Failed to backup {len(failed_layers)} layers out of {len(layers_to_backup)}")
-            for failed in failed_layers[:10]:  # Log first 10 failures
-                _logger.warning(f"  Layer {failed['layer_id']} ({failed['product']}): {failed['error']}")
         
         return backup
 
@@ -1246,6 +1139,83 @@ class FifoRecalculationWizard(models.TransientModel):
             'email_to': ','.join(users.mapped('email')),
         }).send()
 
+    def _build_cost_cache(self, groups):
+        """
+        Pre-compute costs for cost-dependent IN moves before layer deletion.
+        Reads existing SVLs (which still exist before deletion) to get costs
+        for IWT receipts, customer returns, and return moves — all of which
+        would fall back to standard_price during apply if uncached.
+        
+        Keyed by move.id so _classify_move_and_get_cost can check cost_cache
+        during the apply phase (after old SVLs are deleted).
+        
+        Returns dict: {move.id: unit_cost}
+        """
+        _logger = logging.getLogger(__name__)
+        cost_cache = {}
+        SVL = self.env['stock.valuation.layer']
+        
+        for (product_id, warehouse_id), moves in groups.items():
+            for move in moves:
+                source_wh = move.location_id.warehouse_id if move.location_id else False
+                dest_wh = move.location_dest_id.warehouse_id if move.location_dest_id else False
+                
+                # ── IWT receipt via transit (Transit → Internal, diff warehouses) ──
+                if (move.location_id.usage == 'transit' and move.location_dest_id.usage == 'internal'
+                        and source_wh and dest_wh and source_wh.id != dest_wh.id):
+                    self._cache_iwt_cost(move, source_wh, cost_cache, SVL, _logger)
+                
+                # ── IWT receipt direct (Internal → Internal, diff warehouses) ──
+                elif (move.location_id.usage == 'internal' and move.location_dest_id.usage == 'internal'
+                      and source_wh and dest_wh and source_wh.id != dest_wh.id):
+                    self._cache_iwt_cost(move, source_wh, cost_cache, SVL, _logger)
+                
+                # ── Customer returns (cache the move's own positive SVL cost) ──
+                if move.location_id.usage == 'customer' and move.location_dest_id.usage == 'internal':
+                    existing_layer = SVL.search([
+                        ('stock_move_id', '=', move.id),
+                        ('quantity', '>', 0)
+                    ], limit=1)
+                    if existing_layer:
+                        cost_cache[move.id] = existing_layer.unit_cost
+                        _logger.info(f"Cost cache: customer return move {move.id} → unit_cost {existing_layer.unit_cost}")
+                
+                # ── Return moves (cache original move's negative SVL cost) ──
+                if move.origin_returned_move_id:
+                    original_layer = SVL.search([
+                        ('stock_move_id', '=', move.origin_returned_move_id.id),
+                        ('quantity', '<', 0)
+                    ], limit=1)
+                    if original_layer:
+                        cost_cache[move.id] = abs(original_layer.unit_cost)
+                        _logger.info(f"Cost cache: return move {move.id} → unit_cost {abs(original_layer.unit_cost)}")
+        
+        return cost_cache
+    
+    def _cache_iwt_cost(self, move, source_wh, cost_cache, SVL, _logger):
+        """Cache IWT receipt cost from negative SVL.
+        Priority 1: move's OWN negative SVL (direct internal→internal transfers).
+        Don't filter by warehouse_id — standard Odoo may create it without one.
+        Priority 2: chained transit IWTs via move_orig_ids."""
+        source_layer = SVL.search([
+            ('stock_move_id', '=', move.id),
+            ('quantity', '<', 0)
+        ], limit=1)
+        if not source_layer:
+            shipment_moves = move.move_orig_ids.filtered(lambda m: m.state == 'done')
+            if shipment_moves:
+                source_layer = SVL.search([
+                    ('stock_move_id', '=', shipment_moves[0].id),
+                    ('warehouse_id', '=', source_wh.id),
+                    ('quantity', '<', 0)
+                ], limit=1)
+        if source_layer:
+            cost_cache[move.id] = abs(source_layer.unit_cost)
+            _logger.info(f"IWT cost cache: move {move.id} → unit_cost {abs(source_layer.unit_cost)}")
+        else:
+            _logger.info(f"IWT cost cache: move {move.id} no negative SVL found → standard_price")
+            cost_cache[move.id] = move.product_id.standard_price or 0
+
 
 class FifoRecalculationWizardLine(models.TransientModel):
     """
@@ -1295,243 +1265,3 @@ class FifoRecalculationWizardLine(models.TransientModel):
     )
 
 
-class FifoRecalculationBackup(models.Model):
-    """Backup of valuation layers before recalculation."""
-    _name = 'fifo.recalculation.backup'
-    _description = 'FIFO Recalculation Backup'
-    _order = 'create_date desc'
-
-    name = fields.Char(
-        string='Backup Name',
-        compute='_compute_name',
-        store=True
-    )
-    wizard_id = fields.Many2one(
-        'fifo.recalculation.wizard',
-        string='Wizard Reference',
-        ondelete='set null'
-    )
-    date_from = fields.Datetime(
-        string='Date From',
-        required=True
-    )
-    date_to = fields.Datetime(
-        string='Date To',
-        required=True
-    )
-    company_id = fields.Many2one(
-        'res.company',
-        string='Company',
-        required=True
-    )
-    layer_count = fields.Integer(
-        string='Layer Count',
-        readonly=True
-    )
-    state = fields.Selection([
-        ('active', 'Active'),
-        ('restored', 'Restored'),
-        ('expired', 'Expired'),
-    ], default='active', string='State')
-    line_ids = fields.One2many(
-        'fifo.recalculation.backup.line',
-        'backup_id',
-        string='Backup Lines'
-    )
-    restore_date = fields.Datetime(
-        string='Restore Date',
-        readonly=True
-    )
-
-    @api.depends('create_date', 'company_id')
-    def _compute_name(self):
-        for record in self:
-            if record.create_date:
-                record.name = f"Backup {record.company_id.name} - {record.create_date.strftime('%Y-%m-%d %H:%M:%S')}"
-            else:
-                record.name = f"Backup {record.company_id.name}"
-
-    def action_restore(self):
-        """Restore backed up layers."""
-        self.ensure_one()
-        
-        if self.state != 'active':
-            raise UserError(_('This backup has already been restored or expired.'))
-        
-        log = []
-        log.append(f"=== Restoring Backup: {self.name} ===")
-        log.append(f"Layers to restore: {len(self.line_ids)}")
-        log.append("")
-        
-        restored_count = 0
-        failed_count = 0
-        
-        for line in self.line_ids:
-            try:
-                # Check if layer still exists
-                layer = self.env['stock.valuation.layer'].browse(line.layer_id.id)
-                if layer.exists():
-                    # Restore original values
-                    layer.write({
-                        'quantity': line.quantity,
-                        'unit_cost': line.unit_cost,
-                        'value': line.value,
-                        'remaining_qty': line.remaining_qty,
-                        'remaining_value': line.remaining_value,
-                    })
-                    restored_count += 1
-                else:
-                    log.append(f"WARNING: Layer {line.layer_id.id} no longer exists")
-                    failed_count += 1
-            except Exception as e:
-                log.append(f"ERROR restoring layer {line.layer_id.id}: {str(e)}")
-                failed_count += 1
-        
-        log.append("")
-        log.append(f"Restored: {restored_count} layers")
-        log.append(f"Failed: {failed_count} layers")
-        
-        # Update backup state
-        self.write({
-            'state': 'restored',
-            'restore_date': fields.Datetime.now()
-        })
-        
-        return {
-            'type': 'ir.actions.client',
-            'tag': 'display_notification',
-            'params': {
-                'title': _('Rollback Complete'),
-                'message': _('Successfully restored %d layers.\nFailed: %d') % (restored_count, failed_count),
-                'type': 'success' if failed_count == 0 else 'warning',
-                'sticky': True,
-            }
-        }
-
-
-class FifoRecalculationBackupLine(models.Model):
-    """Individual layer backup line."""
-    _name = 'fifo.recalculation.backup.line'
-    _description = 'FIFO Recalculation Backup Line'
-
-    backup_id = fields.Many2one(
-        'fifo.recalculation.backup',
-        required=True,
-        ondelete='cascade'
-    )
-    layer_id = fields.Many2one(
-        'stock.valuation.layer',
-        string='Original Layer',
-        required=True
-    )
-    product_id = fields.Many2one(
-        'product.product',
-        required=True
-    )
-    warehouse_id = fields.Many2one(
-        'stock.warehouse'
-    )
-    quantity = fields.Float(
-        digits='Product Unit of Measure'
-    )
-    unit_cost = fields.Float(
-        digits='Product Price'
-    )
-    value = fields.Float(
-        digits='Product Price'
-    )
-    remaining_qty = fields.Float(
-        digits='Product Unit of Measure'
-    )
-    remaining_value = fields.Float(
-        digits='Product Price'
-    )
-    stock_move_id = fields.Many2one(
-        'stock.move'
-    )
-    description = fields.Char()
-    layer_data = fields.Text(
-        help='JSON data of additional layer information'
-    )
-
-
-class FifoRecalculationConfig(models.Model):
-    """Configuration for scheduled FIFO recalculation."""
-    _name = 'fifo.recalculation.config'
-    _description = 'FIFO Recalculation Configuration'
-
-    name = fields.Char(
-        string='Config Name',
-        required=True
-    )
-    active = fields.Boolean(
-        default=True
-    )
-    is_default = fields.Boolean(
-        string='Default Config',
-        help='Use this config for scheduled actions when no specific config is provided'
-    )
-    company_id = fields.Many2one(
-        'res.company',
-        string='Company',
-        default=lambda self: self.env.company,
-        required=True
-    )
-    date_from = fields.Datetime(
-        string='Start Date',
-        help='Leave empty to use current date'
-    )
-    date_to = fields.Datetime(
-        string='End Date',
-        help='Leave empty to use current date'
-    )
-    warehouse_ids = fields.Many2many(
-        'stock.warehouse',
-        string='Warehouses'
-    )
-    product_ids = fields.Many2many(
-        'product.product',
-        string='Products'
-    )
-    product_categ_ids = fields.Many2many(
-        'product.category',
-        string='Product Categories'
-    )
-    clear_old_layers = fields.Selection([
-        ('none', 'Do not touch existing layers'),
-        ('range', 'Delete & Rebuild in selected date range'),
-        ('all_product', 'Delete all layers for selected products'),
-    ], string='Existing Layers Handling', default='range')
-    lock_after_recal = fields.Boolean(
-        string='Lock new layers',
-        default=True
-    )
-    batch_size = fields.Integer(
-        string='Batch Size',
-        default=100
-    )
-    auto_apply = fields.Boolean(
-        string='Auto Apply',
-        default=False,
-        help='If checked, recalculation will be applied automatically without preview'
-    )
-    notification_user_ids = fields.Many2many(
-        'res.users',
-        string='Notify Users',
-        help='Users to notify after scheduled recalculation'
-    )
-
-    @api.constrains('is_default')
-    def _check_single_default(self):
-        """Ensure only one default config per company."""
-        for record in self:
-            if record.is_default:
-                other_defaults = self.search([
-                    ('id', '!=', record.id),
-                    ('company_id', '=', record.company_id.id),
-                    ('is_default', '=', True)
-                ])
-                if other_defaults:
-                    raise ValidationError(_(
-                        'Only one default configuration is allowed per company.'
-                    ))

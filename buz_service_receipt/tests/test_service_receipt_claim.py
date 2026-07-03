@@ -245,6 +245,58 @@ class TestServiceReceiptClaim(TransactionCase):
         receipt.action_draft()
         self.assertEqual(receipt.state, 'draft')
 
+    def test_08_create_uses_receipt_sequence(self):
+        """Service.receipt sequence always used for name, never claim_number."""
+        receipt = self._create_receipt('replacement')
+        # name should start with SRV/ (service.receipt sequence prefix)
+        self.assertTrue(
+            receipt.name.startswith('SRV/'),
+            f"Name should use service.receipt sequence, got: {receipt.name}"
+        )
+        # claim_number should still be 'New' (default) — not auto-generated
+        self.assertEqual(receipt.claim_number, 'New',
+                         "claim_number should not be auto-generated on create")
+
+    def test_09_default_get_generates_claim_number(self):
+        """default_get pre-generates claim_number when context has default_service_case_type='replacement'."""
+        vals = self.env['service.receipt'].with_context(
+            default_service_case_type='replacement'
+        ).default_get(['claim_number', 'service_case_type'])
+        self.assertTrue(vals.get('claim_number'), "claim_number should be pre-generated")
+        self.assertNotEqual(vals.get('claim_number'), 'New')
+        self.assertTrue(
+            vals['claim_number'].startswith('MCP'),
+            f"Claim number should start with MCP, got: {vals.get('claim_number')}"
+        )
+
+    def test_10_action_create_claim_generates_number(self):
+        """action_create_claim generates claim_number and returns claim form action."""
+        receipt = self._create_receipt('service')
+        self.assertEqual(receipt.claim_number, 'New',
+                         "Claim number should still be default 'New'")
+
+        result = receipt.action_create_claim()
+        # claim_number should now be generated
+        self.assertNotEqual(receipt.claim_number, 'New')
+        self.assertTrue(
+            receipt.claim_number.startswith('MCP'),
+            f"Claim number should start with MCP, got: {receipt.claim_number}"
+        )
+        # service_case_type should be 'replacement'
+        self.assertEqual(receipt.service_case_type, 'replacement')
+        # action should open claim form
+        self.assertEqual(result['res_model'], 'service.receipt')
+        self.assertEqual(result['res_id'], receipt.id)
+        self.assertEqual(result['view_mode'], 'form')
+        self.assertEqual(result['target'], 'current')
+
+    def test_11_no_auto_claim_on_create_replacement(self):
+        """Creating a receipt with replacement type does NOT auto-generate claim_number."""
+        receipt = self._create_receipt('replacement')
+        # claim_number should NOT be set by create (only by action_create_claim)
+        self.assertEqual(receipt.claim_number, 'New',
+                         "claim_number should not be auto-set by create()")
+
 
 @tagged('-at_install', 'post_install')
 class TestServiceReceiptPickingTypeConfig(TransactionCase):

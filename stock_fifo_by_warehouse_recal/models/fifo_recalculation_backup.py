@@ -156,14 +156,12 @@ class FifoRecalculationBackupLine(models.Model):
     layer_id = fields.Many2one(
         'stock.valuation.layer',
         string='Original Layer',
-        required=False,  # Changed to False to allow backup even if layer is deleted
-        ondelete='set null',  # Changed to 'set null' to preserve backup if layer is deleted
-        index=True
+        required=False,
+        ondelete='set null',
     )
     product_id = fields.Many2one(
         'product.product',
-        required=True,
-        index=True
+        required=True
     )
     warehouse_id = fields.Many2one(
         'stock.warehouse'

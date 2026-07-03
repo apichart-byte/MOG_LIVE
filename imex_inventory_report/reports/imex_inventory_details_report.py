@@ -26,6 +26,31 @@ class ImexInventoryDetailsReport(models.Model):
     product_out = fields.Float(readonly=True)
     picking_id = fields.Many2one(comodel_name="stock.picking", readonly=True)
 
+    def init(self):
+        tools.drop_view_if_exists(self.env.cr, self._table)
+        self.env.cr.execute("""CREATE or REPLACE VIEW %s as (
+            SELECT 
+                0 as id,
+                cast(null as timestamp) as date,
+                0 as product_id,
+                0.0 as product_qty,
+                0 as product_uom,
+                0 as product_category,
+                0.0 as unit_cost,
+                cast(null as varchar) as reference,
+                0 as partner_id,
+                cast(null as varchar) as origin,
+                0 as location_id,
+                0 as location_dest_id,
+                0.0 as initial,
+                0.0 as initial_amount,
+                0.0 as product_in,
+                0.0 as product_out,
+                0 as picking_id
+            FROM product_product
+            LIMIT 0
+        )""" % self._table)
+
     @api.depends('reference','picking_id.origin')
     def _compute_display_name(self):
         for rec in self:
@@ -85,7 +110,15 @@ class ImexInventoryDetailsReport(models.Model):
                     null AS product_out, 
                     null AS picking_id
                 FROM stock_move move
-                    LEFT JOIN stock_valuation_layer svl on move.id = svl.stock_move_id
+                    LEFT JOIN (
+                        SELECT stock_move_id,
+                               CASE WHEN SUM(ABS(quantity)) > 0
+                                    THEN SUM(ABS(value)) / SUM(ABS(quantity))
+                                    ELSE 0 END as unit_cost
+                        FROM stock_valuation_layer
+                        WHERE quantity != 0
+                        GROUP BY stock_move_id
+                    ) svl on move.id = svl.stock_move_id
                 WHERE 
                     (move.location_id in %s or move.location_dest_id in %s)
                     and move.state = 'done'
@@ -111,7 +144,15 @@ class ImexInventoryDetailsReport(models.Model):
                         then move.product_qty end as product_out,
                     move.picking_id
                 FROM stock_move move
-                    LEFT JOIN stock_valuation_layer svl on move.id = svl.stock_move_id
+                    LEFT JOIN (
+                        SELECT stock_move_id,
+                               CASE WHEN SUM(ABS(quantity)) > 0
+                                    THEN SUM(ABS(value)) / SUM(ABS(quantity))
+                                    ELSE 0 END as unit_cost
+                        FROM stock_valuation_layer
+                        WHERE quantity != 0
+                        GROUP BY stock_move_id
+                    ) svl on move.id = svl.stock_move_id
                     LEFT JOIN product_product product on move.product_id = product.id
                         LEFT JOIN product_template template on product.product_tmpl_id = template.id
                 WHERE 

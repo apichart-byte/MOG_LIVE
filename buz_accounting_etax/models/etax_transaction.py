@@ -24,6 +24,7 @@ class EtaxTransaction(models.Model):
     state = fields.Selection([
         ('draft', 'ร่าง'),
         ('sending', 'กำลังส่ง'),
+        ('pending', 'กำลังประมวลผล'),
         ('sent', 'ส่งสำเร็จ'),
         ('error', 'ข้อผิดพลาด'),
     ], 'สถานะ', default='draft')
@@ -659,6 +660,26 @@ class EtaxTransaction(models.Model):
                             }
                         }
                     }
+                elif result.get('status') == 'PC':
+                    # e-Tax รับเอกสารแล้ว และกำลังประมวลผลแบบ async (PC001 = Processing Code)
+                    # ไม่ใช่ error — ผู้ใช้สามารถใช้ transaction_code track ผลลัพธ์ภายหลังได้
+                    self.write({
+                        'state': 'pending',
+                        'transaction_code': result.get('transactionCode'),
+                        'error_message': '',
+                    })
+                    return {
+                        'type': 'ir.actions.client',
+                        'tag': 'display_notification',
+                        'params': {
+                            'title': 'กำลังประมวลผล',
+                            'message': (f'E-Tax รับเอกสารแล้ว และกำลังประมวลผล\n'
+                                        f'รหัสธุรกรรม: {result.get("transactionCode")}'),
+                            'type': 'warning',
+                            'sticky': True,
+                            'next': {'type': 'ir.actions.client', 'tag': 'reload'},
+                        }
+                    }
                 else:
                     # มีข้อผิดพลาดจาก API
                     self.write({
@@ -810,14 +831,9 @@ class EtaxTransaction(models.Model):
 
     @api.depends('line_ids.price_unit', 'line_ids.quantity', 'line_ids.discount')
     def _compute_amount_disc(self):
+        # ponytail: ส่วนลดไม่ส่ง E-Tax แสดง 0 เสมอ
         for record in self:
-            total_disc = 0.0
-            for line in record.line_ids:
-                if line.discount:
-                    # price_unit is already after discount, so:
-                    # discount_amount = qty * price_unit * discount / (100 - discount)
-                    total_disc += line.quantity * line.price_unit * line.discount / (100.0 - line.discount)
-            record.amount_disc = total_disc
+            record.amount_disc = 0.0
 
     @api.depends('amount_untaxed')
     def _compute_net_amount(self):

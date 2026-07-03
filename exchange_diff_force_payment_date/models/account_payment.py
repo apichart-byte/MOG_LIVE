@@ -27,14 +27,13 @@ class AccountPayment(models.Model):
         - Force context with payment date before seeking lines
         """
         self.ensure_one()
-        _logger.info('🔍 [PAYMENT] _seek_for_lines called for payment: %s | Date: %s', 
+        _logger.debug('🔍 [PAYMENT] _seek_for_lines called for payment: %s | Date: %s',
                      self.name or 'New', self.date)
-        
+
         # Force the currency rate computation to use payment date
         # by adding it to context
         if self.date:
             self = self.with_context(date=self.date)
-            _logger.info('✅ [PAYMENT] Forced context date to: %s', self.date)
         
         return super()._seek_for_lines()
     
@@ -58,23 +57,26 @@ class AccountMoveLine(models.Model):
     def _compute_currency_rate(self):
         """
         Override to ensure exchange rate is computed using move date
-        (which should be payment date for payments)
-        
-        Standard Odoo sometimes uses 'today' instead of move.date
-        We force it to ALWAYS use move.date
+        (which should be payment date for payments).
+
+        Batched: group payment lines by date to minimise super() calls.
         """
-        for line in self:
-            # Check if this is a payment move
-            if line.move_id and line.move_id.payment_id:
-                payment_date = line.move_id.date
-                _logger.debug('🔍 [LINE] Computing currency rate for payment line | Move Date: %s', payment_date)
-                
-                # Force computation with payment date in context
-                line_with_date = line.with_context(date=payment_date)
-                super(AccountMoveLine, line_with_date)._compute_currency_rate()
-            else:
-                # Standard computation for non-payment lines
-                super(AccountMoveLine, line)._compute_currency_rate()
+        payment_lines = self.filtered(lambda l: l.move_id and l.move_id.payment_id)
+        non_payment_lines = self - payment_lines
+
+        if non_payment_lines:
+            super(AccountMoveLine, non_payment_lines)._compute_currency_rate()
+
+        if payment_lines:
+            grouped = {}
+            for line in payment_lines:
+                dt = line.move_id.date or fields.Date.context_today(self)
+                grouped.setdefault(dt, self.env['account.move.line'])
+                grouped[dt] |= line
+
+            for dt, line_group in grouped.items():
+                _logger.debug('🔍 [LINE] Batch computing currency rate | Date: %s | Lines: %d', dt, len(line_group))
+                super(AccountMoveLine, line_group.with_context(date=dt))._compute_currency_rate()
 
 
 class AccountMove(models.Model):
@@ -85,33 +87,35 @@ class AccountMove(models.Model):
     
     def _recompute_dynamic_lines(self, recompute_all_taxes=False, recompute_tax_base_amount=False):
         """
-        Override to ensure payment date is used when recomputing amounts
+        Override to ensure payment date is used when recomputing amounts.
+        Non-payment moves are batched; payment moves iterate per date.
         """
-        for move in self:
-            # For payment moves, force context with the move date before recomputing.
-            if move.payment_id and move.date:
-                move = move.with_context(date=move.date)
-                _logger.debug(
-                    '🔍 [MOVE] Recomputing with forced date: %s for payment: %s',
-                    move.date,
-                    move.payment_id.name,
-                )
+        payment_moves = self.filtered(lambda m: m.payment_id and m.date)
+        other_moves = self - payment_moves
 
-            super(AccountMove, move)._recompute_dynamic_lines(
-                recompute_all_taxes,
-                recompute_tax_base_amount,
+        if other_moves:
+            super(AccountMove, other_moves)._recompute_dynamic_lines(
+                recompute_all_taxes, recompute_tax_base_amount,
             )
-        return
-    
+
+        for move in payment_moves:
+            _logger.debug(
+                '🔍 [MOVE] Recomputing with forced date: %s for payment: %s',
+                move.date, move.payment_id.name,
+            )
+            super(AccountMove, move.with_context(date=move.date))._recompute_dynamic_lines(
+                recompute_all_taxes, recompute_tax_base_amount,
+            )
+
     @api.model
     def _get_accounting_date(self, invoice_date, has_tax):
         """
-        Override to ensure payment accounting date uses payment date
+        Override to ensure payment accounting date uses payment date.
+        Only applies to payment moves to avoid side effects on regular invoices.
         """
-        # Check if we're in payment context
-        if self.env.context.get('date'):
+        if self.payment_id and self.env.context.get('date'):
             return self.env.context.get('date')
-        
+
         return super()._get_accounting_date(invoice_date, has_tax)
 
 
@@ -129,7 +133,7 @@ class AccountPaymentRegister(models.TransientModel):
         """
         for wizard in self:
             if wizard.payment_date:
-                _logger.info('🔍 [WIZARD] Computing amount with payment_date: %s', wizard.payment_date)
+                _logger.debug('🔍 [WIZARD] Computing amount with payment_date: %s', wizard.payment_date)
                 wizard_with_date = wizard.with_context(date=wizard.payment_date)
                 super(AccountPaymentRegister, wizard_with_date)._compute_amount()
             else:
@@ -139,7 +143,7 @@ class AccountPaymentRegister(models.TransientModel):
         """
         Override to ensure payment date context is set when creating payments
         """
-        _logger.info('🚀 [WIZARD] Creating payments with date: %s', self.payment_date)
+        _logger.debug('🚀 [WIZARD] Creating payments with date: %s', self.payment_date)
         
         # Force payment date into context
         if self.payment_date:
