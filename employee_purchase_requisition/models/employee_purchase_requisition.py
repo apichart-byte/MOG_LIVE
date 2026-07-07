@@ -389,7 +389,24 @@ class PurchaseRequisition(models.Model):
                 if 'payment_date' in PO._fields:
                     po_vals['payment_date'] = expected_payment
 
-            self.env['purchase.order'].create(po_vals)
+            po = self.env['purchase.order'].create(po_vals)
+
+            # Ponytail: copy PR attachments to RFQ chatter as link refs.
+            pr_attachments = self.env['ir.attachment'].search([
+                ('res_model', '=', self._name),
+                ('res_id', '=', self.id),
+            ])
+            if pr_attachments:
+                po_attachments = self.env['ir.attachment']
+                for att in pr_attachments:
+                    po_attachments |= att.copy({
+                        'res_model': 'purchase.order',
+                        'res_id': po.id,
+                    })
+                po.message_post(
+                    body=f'<p>Attached from PR <b>{self.name}</b></p>',
+                    attachment_ids=po_attachments.ids,
+                )
 
         if purchase_orders:
             self.write({'state': 'purchase_order_created'})
@@ -444,6 +461,27 @@ class PurchaseRequisition(models.Model):
             'state': 'received',
             'receive_date': fields.Date.today(),
         })
+
+    def action_set_to_draft(self):
+        """Reset cancelled requisition back to draft (administrative)."""
+        for rec in self:
+            active_pos = self.env['purchase.order'].search([
+                ('requisition_order', '=', rec.name),
+                ('state', 'not in', ['cancel'])
+            ])
+            if active_pos:
+                raise ValidationError(
+                    'ไม่สามารถตั้งค่าเป็น Draft ได้ เนื่องจากยังมีใบสั่งซื้อ '
+                    '(PO) ที่เกี่ยวข้องและยังทำงานอยู่ '
+                    'กรุณายกเลิกใบสั่งซื้อทั้งหมดที่เกี่ยวข้องก่อน')
+            if hasattr(rec, '_release_monthly_analytic_budget'):
+                try:
+                    rec._release_monthly_analytic_budget()
+                except Exception:
+                    pass
+            rec.write({'state': 'draft'})
+            rec.message_post(
+                body=f'Status reset to Draft by {self.env.user.name}')
 
     # ── Smart buttons ────────────────────────────────────────────
     def get_purchase_order(self):
