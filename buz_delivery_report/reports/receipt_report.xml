@@ -189,6 +189,10 @@
                             </span>
                         </div>
                         <div class="mb-2">
+                            <t t-set="vendor_bill" t-value="doc.purchase_id.invoice_ids[:1] if doc.purchase_id else False"/>
+                            <strong style="width: 30%; display: inline-block;">เลขที่ใบกำกับภาษี:</strong>
+                            <span t-if="vendor_bill" t-field="vendor_bill.name"/>
+                            <span t-else="">-</span>
                         </div>
                         <div class="mb-2">
                             <strong style="width: 20%; display: inline-block;">ที่อยู่จัดส่ง:</strong>
