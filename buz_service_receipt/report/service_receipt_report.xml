@@ -203,7 +203,7 @@
                                     width: 100%;
                                     border-collapse: collapse;
                                     table-layout: fixed;
-                                    margin-top: 2mm;
+                                    margin-top: 24mm;
                                 }
                                 .sign-table td {
                                     height: 23mm;
@@ -215,6 +215,7 @@
                                     display: table;
                                     width: 100%;
                                     font-weight: 700;
+                                    margin-top: 10mm;
                                     padding-top: 10mm;
                                 }
                                 .sr-footer div {
@@ -225,15 +226,14 @@
 
                             <t t-set="service_hour" t-value="int(o.service_time or 0)"/>
                             <t t-set="service_minute" t-value="int(round(((o.service_time or 0) - service_hour) * 60))"/>
-                            <t t-set="line_count" t-value="len(o.line_ids)"/>
-                            <t t-set="total_rows" t-value="max(line_count, 5)"/>
+                            <t t-set="line_count" t-value="min(len(o.line_ids), 5)"/>
 
                             <div class="sr-grid-bg"></div>
                             <div class="sr-content">
                                 <table class="sr-head">
                                     <tr>
                                         <td class="sr-company">
-                                            <div>บริษัท โมเก้น (ประเทศไทย) จำกัด</div>
+                                            <div>บริษัท โมเก้น จำกัด</div>
                                             <div>9 หมู่12 ตำบลบึงคำพร้อย&#160; อำเภอลำลูกกา&#160; จังหวัดปทุมธานี 12150</div>
                                             <div>โทร02-1509709-13&#160; โทรสาร 02-1528801&#160; E-mail : contact@mogen.co.th</div>
                                         </td>
@@ -288,7 +288,7 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <t t-foreach="o.line_ids" t-as="line">
+                                        <t t-foreach="o.line_ids[:5]" t-as="line">
                                             <tr style="height: 30px;">
                                                 <td><span t-esc="line.description or line.product_id.display_name or ''"/></td>
                                                 <td style="text-align:center;"><span t-esc="line.quantity"/></td>
@@ -296,7 +296,7 @@
                                                 <td><span t-esc="line.appointment_detail or ''"/></td>
                                             </tr>
                                         </t>
-                                        <t t-foreach="range(max(9 - line_count, 0))" t-as="i">
+                                        <t t-foreach="range(max(5 - line_count, 0))" t-as="i">
                                             <tr style="height: 30px;">
                                                 <td></td>
                                                 <td></td>
@@ -433,6 +433,11 @@
                                         </td>
                                         <td style="width:50%;">
                                             ลงชื่อ<span class="dot" style="width:62%;" t-esc="o.customer_sign_name or ''"/>ผู้รับบริการ<br/>
+                                            (<span class="dot" style="width:78%;"></span>)<br/>
+                                            วันที่<span class="dot" style="width:76%;" t-esc="o.customer_sign_date.strftime('%d/%m/%Y') if o.customer_sign_date else ''"/>
+                                        </td>
+                                        <td style="width:50%;">
+                                            ลงชื่อ<span class="dot" style="width:62%;" t-esc="o.customer_sign_name or ''"/>ผู้อนุมัติ<br/>
                                             (<span class="dot" style="width:78%;"></span>)<br/>
                                             วันที่<span class="dot" style="width:76%;" t-esc="o.customer_sign_date.strftime('%d/%m/%Y') if o.customer_sign_date else ''"/>
                                         </td>
