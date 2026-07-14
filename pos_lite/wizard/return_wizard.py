@@ -1,5 +1,8 @@
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class PosLiteReturnWizard(models.TransientModel):
@@ -99,7 +102,7 @@ class PosLiteReturnWizard(models.TransientModel):
             available_qty = line.available_return_qty if hasattr(line, 'available_return_qty') else line.qty
             if available_qty <= 0:
                 continue
-            lines.append((0, 0, {
+            lines.append(fields.Command.create({
                 'order_line_id': line.id,
                 'product_id': line.product_id.id,
                 'description': line.description or line.product_id.display_name,
@@ -143,7 +146,7 @@ class PosLiteReturnWizard(models.TransientModel):
                     raise UserError(_('Return quantity for %s cannot exceed the available quantity.') % line.description)
 
         order = self.order_id
-        line_commands = [(0, 0, {
+        line_commands = [fields.Command.create({
             'returned_from_line_id': l.order_line_id.id,
             'product_id': l.product_id.id or l.order_line_id.product_id.id,
             'description': l.description or (l.order_line_id.product_id.display_name if l.order_line_id.product_id else l.product_id.display_name),
@@ -165,6 +168,7 @@ class PosLiteReturnWizard(models.TransientModel):
             'company_id': order.company_id.id,
             'session_id': order.session_id.id if order.session_id else False,
             'channel': order.channel,
+            'trade_channel': order.trade_channel,
             'customer_name': order.customer_name,
             'partner_id': order.partner_id.id if order.partner_id else False,
             'partner_phone': order.partner_phone,
@@ -194,7 +198,7 @@ class PosLiteReturnWizard(models.TransientModel):
 
         # 2. Exchange: create new sale order
         if self.is_exchange and self.exchange_line_ids:
-            exchange_line_commands = [(0, 0, {
+            exchange_line_commands = [fields.Command.create({
                 'product_id': ex.product_id.id,
                 'description': ex.product_id.display_name,
                 'qty': ex.qty,
@@ -207,6 +211,7 @@ class PosLiteReturnWizard(models.TransientModel):
                 'company_id': order.company_id.id,
                 'session_id': order.session_id.id if order.session_id else False,
                 'channel': self.exchange_channel or order.channel,
+                'trade_channel': order.trade_channel,
                 'customer_name': partner.name if partner else order.customer_name,
                 'partner_id': partner.id if partner else False,
                 'partner_phone': (partner.phone or partner.mobile) if partner else order.partner_phone,
@@ -313,5 +318,9 @@ class PosLiteReturnWizardExchangeLine(models.TransientModel):
                 else:
                     price = pricelist._get_product_price_rule(self.product_id, self.qty or 1.0, partner)[0]
             except (AttributeError, IndexError, TypeError):
+                _logger.warning(
+                    'Pricelist %s failed for %s; falling back to lst_price',
+                    pricelist.id, self.product_id.display_name, exc_info=True,
+                )
                 price = self.product_id.lst_price
         self.price_unit = price

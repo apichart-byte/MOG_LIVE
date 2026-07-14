@@ -73,6 +73,18 @@ class PosLiteSession(models.Model):
         ('walkin', 'Walk-in'),
         ('other', 'Other'),
     ], string='ช่องทางล่าสุด', tracking=True)
+    current_trade_channel = fields.Selection(
+        selection='_selection_trade_channel',
+        string='Trade Channel ล่าสุด',
+        help='Trade channel last used in this session for settlement grouping.',
+        tracking=True,
+    )
+
+    @api.model
+    def _selection_trade_channel(self):
+        """Dynamic selection mirroring sale.order.trade_channel (injected by marketplace_settlement)."""
+        from .pos_order import _get_trade_channel_selection
+        return _get_trade_channel_selection(self)
 
     _sql_constraints = [
         ('name_unique', 'unique(name)', 'Session number must be unique.'),
@@ -131,7 +143,27 @@ class PosLiteSession(models.Model):
                 vals['name'] = self.env['ir.sequence']._safe_next_by_code(
                     'pos.lite.session', 'pos.lite.session', prefix='SESS',
                 )
-        return super().create(vals_list)
+        sessions = super().create(vals_list)
+        sessions._check_single_open_session()
+        return sessions
+
+    def _check_single_open_session(self):
+        """At most one opened session per (company, config) — prevents ambiguous
+        sales attribution when two shifts run simultaneously on the same config."""
+        for session in self:
+            if session.state != 'opened':
+                continue
+            existing = self.search([
+                ('id', '!=', session.id),
+                ('company_id', '=', session.company_id.id),
+                ('config_id', '=', session.config_id.id),
+                ('state', '=', 'opened'),
+            ], limit=1)
+            if existing:
+                raise UserError(_(
+                    'Session %s is already open for this company/config. '
+                    'Close it before opening a new one.'
+                ) % existing.name)
 
     def action_close_session(self):
         for session in self:
@@ -219,6 +251,7 @@ class PosLiteSession(models.Model):
             'default_session_id': self.id,
             'default_employee_id': self.current_employee_id.id,
             'default_channel': self.current_channel or 'walkin',
+            'default_trade_channel': self.current_trade_channel or config.default_trade_channel or False,
             'default_company_id': self.company_id.id,
         }
         if config:
@@ -242,5 +275,5 @@ class PosLiteSession(models.Model):
             'type': 'ir.actions.act_url',
             'name': 'POS Lite Terminal',
             'url': '/pos_lite/ui?session_id=%d' % self.id,
-            'target': 'self',
+            'target': 'new',
         }

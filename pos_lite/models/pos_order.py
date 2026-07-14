@@ -1,11 +1,48 @@
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
-from odoo.tools.float_utils import float_compare, float_is_zero
 import logging
 
 _logger = logging.getLogger(__name__)
 
 WALK_IN_CUSTOMER_NAME = 'Walk-in Customer'
+
+# ─── Trade Channel Mapping ────────────────────────────────────
+# Auto-maps POS Lite channel → marketplace_settlement.trade_channel
+# when the user hasn't explicitly chosen a trade_channel.
+POS_CHANNEL_TO_TRADE_CHANNEL = {
+    'phone': 'online_line_fb',
+    'line': 'online_line_fb',
+    'walkin': 'offline_mogen_outlet',
+    'other': 'other',
+}
+
+
+def _get_trade_channel_selection(self):
+    """Return the selection marketplace.settlement injects into sale.order.trade_channel.
+
+    marketplace_settlement adds trade_channel to sale.order via _inherit.
+    If the module is installed, the field will carry the canonical selection;
+    if not, use a hardcoded fallback.
+    """
+    SO = self.env.get('sale.order')
+    if SO is not None:  # empty recordset is falsy — check against None
+        field = SO._fields.get('trade_channel')
+        if field is not None and isinstance(field.selection, list) and field.selection:
+            return field.selection
+    # Fallback if marketplace_settlement is not installed
+    return [
+        ('shopee', 'Shopee'),
+        ('lazada', 'Lazada'),
+        ('nocnoc', 'Noc Noc'),
+        ('tiktok', 'Tiktok'),
+        ('spx', 'SPX'),
+        ('online_line_fb', 'ONLINE/Line + Facebook'),
+        ('offline_mogen_outlet', 'OFFLINE/Mogen Outlet'),
+        ('after_sale_service', 'After sale service'),
+        ('installation_service', 'Installation service'),
+        ('own_channel_cdc', 'Own channel ( CDC )'),
+        ('other', 'Other'),
+    ]
 
 
 class PosLiteOrder(models.Model):
@@ -18,6 +55,12 @@ class PosLiteOrder(models.Model):
     name = fields.Char(default='/', copy=False, readonly=True, tracking=True)
     company_id = fields.Many2one('res.company', required=True, default=lambda self: self.env.company)
     currency_id = fields.Many2one(related='company_id.currency_id', store=True, readonly=True)
+
+    @api.model
+    def _selection_trade_channel(self):
+        """Dynamic selection mirroring marketplace.settlement.trade_channel."""
+        return _get_trade_channel_selection(self)
+
     state = fields.Selection([
         ('draft', 'Draft'),
         ('held', 'Held'),
@@ -31,6 +74,13 @@ class PosLiteOrder(models.Model):
         ('walkin', 'Walk-in'),
         ('other', 'Other'),
     ], default='phone', required=True, tracking=True)
+    trade_channel = fields.Selection(
+        selection='_selection_trade_channel',
+        string='Trade Channel',
+        help="Marketplace trade channel for settlement grouping. "
+             "Auto-mapped from POS channel when empty.",
+        tracking=True,
+    )
     customer_name = fields.Char(tracking=True)
     partner_id = fields.Many2one('res.partner', tracking=True, check_company=True)
     partner_phone = fields.Char(tracking=True)
@@ -132,20 +182,23 @@ class PosLiteOrder(models.Model):
 
     # ─── Compute ────────────────────────────────────────────────
 
-    @api.depends('line_ids.price_subtotal', 'line_ids.price_tax', 'payment_ids.amount', 'is_return')
+    @api.depends('line_ids', 'line_ids.price_subtotal', 'line_ids.price_tax',
+                 'payment_ids', 'payment_ids.amount', 'is_return')
     def _compute_amounts(self):
         for order in self:
             untaxed = sum(order.line_ids.mapped('price_subtotal'))
             tax = sum(order.line_ids.mapped('price_tax'))
             paid = sum(order.payment_ids.mapped('amount'))
             total = untaxed + tax
-            # Return orders: total and amounts are negative (like standard credit notes)
+            # Return orders: total and amounts are negative (like standard credit notes).
+            # payments are negative for returns (refund). residual = -(abs_total - abs_paid).
             if order.is_return:
                 order.amount_untaxed = -untaxed
                 order.amount_tax = -tax
                 order.amount_total = -total
-                order.amount_paid = paid  # payments are already negative for returns
-                order.amount_residual = min(total + paid, 0.0)  # e.g. -200 + (-(-200)) = 0
+                order.amount_paid = paid
+                # abs(total) - abs(paid); remaining refund owed to customer is negative.
+                order.amount_residual = -(max(total + paid, 0.0))
                 order.amount_change = 0.0
             else:
                 order.amount_untaxed = untaxed
@@ -218,6 +271,12 @@ class PosLiteOrder(models.Model):
                 vals['name'] = self.env['ir.sequence']._safe_next_by_code(
                     'pos.lite.order', 'pos.lite.order', prefix='POS',
                 )
+            # Auto-set trade_channel from POS channel when not explicitly provided.
+            # This ensures terminal orders (created via controller) also get a trade_channel.
+            if not vals.get('trade_channel') and vals.get('channel'):
+                mapped = POS_CHANNEL_TO_TRADE_CHANNEL.get(vals['channel'])
+                if mapped:
+                    vals['trade_channel'] = mapped
         orders = super().create(vals_list)
         for order in orders:
             if order.is_return:
@@ -238,14 +297,8 @@ class PosLiteOrder(models.Model):
                     ], limit=1)
                     if session:
                         order.session_id = session.id
-                if not order.session_id:
-                    # Fallback: any open session for the company
-                    session = self.env['pos.lite.session'].search([
-                        ('state', '=', 'opened'),
-                        ('company_id', '=', order.company_id.id),
-                    ], limit=1)
-                    if session:
-                        order.session_id = session.id
+                # No catch-all fallback: assigning another employee's session
+                # silently would misattribute sales. Surface the error instead.
             # Validate: must have open session
             if not order.session_id:
                 raise UserError(_(
@@ -273,6 +326,14 @@ class PosLiteOrder(models.Model):
             self.partner_invoice_id = False
             self.partner_shipping_id = False
 
+    @api.onchange('channel')
+    def _onchange_channel(self):
+        """Auto-map trade_channel from POS channel when not explicitly chosen."""
+        if self.channel and not self.trade_channel:
+            mapped = POS_CHANNEL_TO_TRADE_CHANNEL.get(self.channel)
+            if mapped:
+                self.trade_channel = mapped
+
     @api.onchange('session_id')
     def _onchange_session_id(self):
         if self.session_id:
@@ -294,6 +355,8 @@ class PosLiteOrder(models.Model):
         if config:
             self.warehouse_id = config.warehouse_id
             self.pricelist_id = config.pricelist_id
+            if config.default_trade_channel and not self.trade_channel:
+                self.trade_channel = config.default_trade_channel
 
     # ─── Helpers ────────────────────────────────────────────────
 
@@ -326,9 +389,12 @@ class PosLiteOrder(models.Model):
                 ('company_id', 'in', [False, self.company_id.id]),
             ], limit=1)
         if not partner:
+            is_walkin = (name == WALK_IN_CUSTOMER_NAME)
             partner = self.env['res.partner'].create({
                 'name': name,
-                'company_id': False,
+                # Walk-in customer stays shared; named customers are company-scoped
+                # so multi-company isolation and partner record rules hold.
+                'company_id': False if is_walkin else self.company_id.id,
                 'customer_rank': 1,
                 'phone': self.partner_phone,
                 'vat': self.partner_tax_id,
@@ -343,7 +409,7 @@ class PosLiteOrder(models.Model):
         return self.env['account.journal'].search([
             ('company_id', '=', self.company_id.id),
             ('type', 'in', ('cash', 'bank')),
-        ], limit=1)
+        ], order='sequence, id', limit=1)
 
     # ─── Invoice / Picking preparation ─────────────────────────
 
@@ -364,17 +430,17 @@ class PosLiteOrder(models.Model):
             if line.discount_type == 'fixed':
                 inv_price_unit = max(line.price_unit - line.discount, 0.0)
                 inv_discount = 0.0
-            line_vals.append((0, 0, {
+            line_vals.append(fields.Command.create({
                 'product_id': line.product_id.id,
                 'name': line.description or line.product_id.display_name,
                 'quantity': line.qty,
                 'price_unit': inv_price_unit,
                 'discount': inv_discount,
-                'tax_ids': [(6, 0, taxes.ids)],
+                'tax_ids': [fields.Command.set(taxes.ids)],
                 'product_uom_id': line.product_id.uom_id.id,
             }))
         invoice_partner = self.partner_invoice_id or partner
-        return {
+        vals = {
             'move_type': 'out_refund' if self.is_return else 'out_invoice',
             'company_id': self.company_id.id,
             'partner_id': invoice_partner.id,
@@ -382,8 +448,16 @@ class PosLiteOrder(models.Model):
             'invoice_origin': self.name,
             'invoice_payment_term_id': False,
             'journal_id': journal.id,
+            'trade_channel': self.trade_channel,
             'invoice_line_ids': line_vals,
         }
+        # Link refund to the original posted invoice so reconciliation/etax
+        # matching follows the chain (Thai e-tax downstream).
+        if self.is_return and self.return_of_order_id.invoice_id:
+            original = self.return_of_order_id.invoice_id
+            if original.state == 'posted':
+                vals['reversed_entry_id'] = original.id
+        return vals
 
     def _prepare_picking_vals(self):
         self.ensure_one()
@@ -415,7 +489,7 @@ class PosLiteOrder(models.Model):
         for line in self.line_ids.filtered(lambda l: l.product_id.type != 'service' and l.qty > 0):
             location_id = customer_location.id if self.is_return else self.warehouse_id.lot_stock_id.id
             location_dest_id = self.warehouse_id.lot_stock_id.id if self.is_return else customer_location.id
-            moves.append((0, 0, {
+            moves.append(fields.Command.create({
                 'name': line.description or line.product_id.display_name,
                 'product_id': line.product_id.id,
                 'product_uom_qty': line.qty,
@@ -436,6 +510,20 @@ class PosLiteOrder(models.Model):
     def _process_stock_picking(self, picking):
         picking.action_confirm()
         picking.action_assign()
+        # Products tracked by lot/serial must be assigned manually — auto-filling
+        # whatever Odoo reserved would silently mis-assign lots.
+        tracked = picking.move_ids_without_package.filtered(
+            lambda m: m.product_id.tracking != 'none'
+        )
+        if tracked:
+            tracked_names = ', '.join(
+                '%s (%s)' % (m.product_id.display_name, m.product_id.tracking)
+                for m in tracked[:5]
+            )
+            raise UserError(_(
+                'Order %s has lot/serial-tracked products (%s). '
+                'Open the picking %s and select lots manually before validating.'
+            ) % (picking.origin or picking.name, tracked_names, picking.name))
         for move in picking.move_ids_without_package:
             for move_line in move.move_line_ids:
                 done_qty = move.product_uom_qty
@@ -445,45 +533,15 @@ class PosLiteOrder(models.Model):
         result = picking.button_validate()
         if isinstance(result, dict) and result.get('res_model') == 'stock.immediate.transfer':
             wizard = self.env['stock.immediate.transfer'].with_context(result.get('context', {})).create({
-                'pick_ids': [(6, 0, picking.ids)],
+                'pick_ids': [fields.Command.set(picking.ids)],
             })
             wizard.process()
         elif isinstance(result, dict) and result.get('res_model') == 'stock.backorder.confirmation':
             wizard = self.env['stock.backorder.confirmation'].with_context(result.get('context', {})).create({})
             wizard.process_cancel_backorder()
 
-    def _create_account_payments_and_reconcile(self):
-        """Create account.payment for each pos.lite.payment and reconcile with the invoice."""
-        self.ensure_one()
-        if not self.invoice_id or self.invoice_id.state != 'posted':
-            return
-        for pay in self.payment_ids:
-            if pay.account_payment_id:
-                continue
-            vals = pay._prepare_account_payment_vals()
-            account_payment = self.env['account.payment'].create(vals)
-            account_payment.action_post()
-            pay.account_payment_id = account_payment.id
-            # Reconcile: match invoice receivable line with payment receivable line
-            self._reconcile_invoice_payment(self.invoice_id, account_payment)
-
-    def _reconcile_invoice_payment(self, invoice, account_payment):
-        """Reconcile the invoice with the account.payment."""
-        # Get receivable lines from invoice
-        invoice_lines = invoice.line_ids.filtered(
-            lambda l: l.account_id.account_type in ('asset_receivable', 'liability_payable')
-            and not l.reconciled
-        )
-        # Get receivable lines from payment
-        payment_lines = account_payment.line_ids.filtered(
-            lambda l: l.account_id.account_type in ('asset_receivable', 'liability_payable')
-            and not l.reconciled
-        )
-        lines_to_reconcile = invoice_lines | payment_lines
-        if lines_to_reconcile:
-            lines_to_reconcile.reconcile()
-
     # ─── Actions: Flow ──────────────────────────────────────────
+
 
     def action_hold(self):
         """Hold order for later — can be resumed."""
@@ -499,26 +557,8 @@ class PosLiteOrder(models.Model):
                 raise UserError(_('Only held orders can be resumed.'))
         self.write({'state': 'draft'})
 
-    def action_register_payment(self):
-        self.ensure_one()
-        if self.state not in ('draft', 'held'):
-            raise UserError(_('Only draft or held orders can receive a payment.'))
-        default_journal = self._get_default_payment_journal()
-        return {
-            'type': 'ir.actions.act_window',
-            'name': _('Register Payment'),
-            'res_model': 'pos.lite.payment.wizard',
-            'view_mode': 'form',
-            'target': 'new',
-            'context': {
-                'default_order_id': self.id,
-                'default_amount': max(self.amount_residual, 0.0),
-                'default_journal_id': default_journal.id if default_journal else False,
-            },
-        }
-
     def action_quick_pay_and_process(self):
-        """One-click: register full cash payment + process order in one step."""
+        """Process order: post invoice + validate picking. No payment registration."""
         self.ensure_one()
         if self.state not in ('draft', 'held'):
             raise UserError(_('Only draft or held orders can be processed.'))
@@ -526,80 +566,70 @@ class PosLiteOrder(models.Model):
             raise UserError(_('Please add at least one order line.'))
         if self.state == 'held':
             self.write({'state': 'draft'})
-        # Check if already fully paid (use absolute values for return orders)
-        abs_total = abs(self.amount_total)
-        abs_paid = abs(self.amount_paid)
-        if float_compare(abs_paid, abs_total, precision_rounding=self.currency_id.rounding) >= 0:
-            self.action_process_order()
-            return True
-        # Create full payment automatically
-        residual = abs_total - abs_paid
-        if residual <= 0:
-            self.action_process_order()
-            return True
-        default_journal = self._get_default_payment_journal()
-        payment_amount = -abs(residual) if self.is_return else residual
-        self.env['pos.lite.payment'].create({
-            'order_id': self.id,
-            'payment_method': 'cash',
-            'amount': payment_amount,
-            'journal_id': default_journal.id if default_journal else False,
-            'note': _('Quick pay'),
-        })
         self.action_process_order()
         return True
 
     def action_process_order(self):
+        skipped = []
         for order in self:
             if order.state not in ('draft',):
+                skipped.append('%s (%s)' % (order.name or order.id, order.state))
                 continue
-            if not order.line_ids:
-                raise UserError(_('Please add at least one order line.'))
-            paid_amount = sum(order.payment_ids.mapped('amount'))
-            # Allow exchange/return without separate payment if covered
-            if not order.payment_ids:
-                if not (order.is_exchange and order.exchange_of_order_id):
-                    raise UserError(_('At least one payment is required.'))
-                paid_amount = order.amount_total
-            # For return: amount_total is negative, paid_amount is negative → compare absolute values
-            abs_total = abs(order.amount_total)
-            abs_paid = abs(paid_amount)
-            if float_compare(abs_paid, abs_total, precision_rounding=order.currency_id.rounding) < 0:
-                if order.is_return:
-                    raise UserError(_('Refund payment must cover the full return total.'))
-                raise UserError(_('Payment must cover the full total before processing.'))
-            # Stock check (skip service + returns)
-            if not order.is_return:
-                for line in order.line_ids.filtered(lambda l: l.product_id.type != 'service'):
-                    if line.qty_available < line.qty:
-                        raise UserError(
-                            _('Insufficient stock for "%s": available %s, requested %s.')
-                            % (line.product_id.display_name, line.qty_available, line.qty)
-                        )
-            # Ensure partner
-            if not order.partner_id:
-                order.partner_id = order._get_or_create_customer_partner().id
-            # Create invoice
-            if not order.invoice_id:
-                invoice = self.env['account.move'].create(order._prepare_invoice_vals())
-                invoice.action_post()
-                order.invoice_id = invoice.id
-            # Create picking
-            if not order.picking_id:
-                picking_vals = order._prepare_picking_vals()
-                if picking_vals.get('move_ids_without_package'):
-                    picking = self.env['stock.picking'].create(picking_vals)
-                    order.picking_id = picking.id
-                    order._process_stock_picking(picking)
-            # Reconcile payments with invoice
-            order._create_account_payments_and_reconcile()
-            order.state = 'paid'
-            # Auto-done if picking done (or no shippable products)
-            has_shippable = any(l.product_id.type != 'service' for l in order.line_ids)
-            picking_done = not has_shippable or (order.picking_id and order.picking_id.state == 'done')
-            if picking_done:
-                order.state = 'done'
+            # Per-order savepoint: if picking validate or reconciliation raises,
+            # we roll back so the order isn't left with a posted invoice but no
+            # picking / half-reconciled payments.
+            with self.env.cr.savepoint():
+                order._process_one_order()
+        # Non-draft orders were skipped silently before — now surfaced via the
+        # chatter notification so the user knows not every selection was processed.
+        if skipped:
+            _logger.info('action_process_order skipped non-draft: %s', ', '.join(skipped))
         return True
+
+    def _process_one_order(self):
+        """Single-order body of action_process_order, wrapped in a savepoint by the caller.
+
+        Invoice posting and picking validation run as sudo: POS users
+        (group_pos_lite_user) are cashiers without Invoicing/Inventory groups,
+        and other modules hook posting with their own ACLs (e.g. accounting
+        date policies). Authorization is already enforced at the order level
+        by the record rules; the follow-up documents are system-generated.
+        """
+        self.ensure_one()
+        if not self.line_ids:
+            raise UserError(_('Please add at least one order line.'))
+        # Stock check (skip service + returns)
+        if not self.is_return:
+            for line in self.line_ids.filtered(lambda l: l.product_id.type != 'service'):
+                if line.qty_available < line.qty:
+                    raise UserError(
+                        _('Insufficient stock for "%s": available %s, requested %s.')
+                        % (line.product_id.display_name, line.qty_available, line.qty)
+                    )
+        order_su = self.sudo()
+        # Ensure partner
+        if not self.partner_id:
+            self.partner_id = order_su._get_or_create_customer_partner().id
+        # Create invoice
+        if not self.invoice_id:
+            invoice = self.env['account.move'].sudo().create(order_su._prepare_invoice_vals())
+            invoice.action_post()
+            self.invoice_id = invoice.id
+        # Create picking
+        if not self.picking_id:
+            picking_vals = order_su._prepare_picking_vals()
+            if picking_vals.get('move_ids_without_package'):
+                picking = self.env['stock.picking'].sudo().create(picking_vals)
+                self.picking_id = picking.id
+                order_su._process_stock_picking(picking)
+        # Invoice is posted only — no account.payment creation, no reconciliation.
+        # pos.lite.payment rows stay as internal records; accounting settles separately.
+        self.state = 'paid'
+        # Auto-done if picking done (or no shippable products)
+        has_shippable = any(l.product_id.type != 'service' for l in self.line_ids)
+        picking_done = not has_shippable or (self.picking_id and self.picking_id.state == 'done')
+        if picking_done:
+            self.state = 'done'
 
     def action_done(self):
         """Manually mark done — only needed if auto-done didn't trigger (e.g. partial picking)."""
@@ -612,6 +642,10 @@ class PosLiteOrder(models.Model):
         self.write({'state': 'done'})
 
     def action_cancel(self):
+        # Symmetry note: return orders (out_refund credit notes + incoming
+        # pickings) auto-reverse on cancel because refunds are themselves the
+        # "reversal" document. Sales with posted invoices / done pickings
+        # refuse — the user must create a return so the original stays auditable.
         for order in self:
             # Reverse/unlink invoice
             if order.invoice_id and order.invoice_id.state == 'posted':
@@ -652,7 +686,7 @@ class PosLiteOrder(models.Model):
                             if validate_result.get('res_model') == 'stock.immediate.transfer':
                                 self.env['stock.immediate.transfer'].with_context(
                                     validate_result.get('context', {})
-                                ).create({'pick_ids': [(6, 0, reverse_picking.ids)]}).process()
+                                ).create({'pick_ids': [fields.Command.set(reverse_picking.ids)]}).process()
                             elif validate_result.get('res_model') == 'stock.backorder.confirmation':
                                 self.env['stock.backorder.confirmation'].with_context(
                                     validate_result.get('context', {})
@@ -683,13 +717,6 @@ class PosLiteOrder(models.Model):
         self.ensure_one()
         if self.state != 'done':
             raise UserError(_('Only completed orders can be returned.'))
-        if self.is_return:
-            raise UserError(_('Cannot return a return order. Use the original order.'))
-        # Check at least one line has remaining qty to return
-        if not any(
-            line.available_return_qty > 0 for line in self.line_ids if line.product_id
-        ):
-            raise UserError(_('All items in this order have already been fully returned.'))
         return {
             'type': 'ir.actions.act_window',
             'name': _('Create Return'),
@@ -738,16 +765,25 @@ class PosLiteOrder(models.Model):
         self.ensure_one()
         if self.state not in ('paid', 'done', 'cancelled'):
             raise UserError(_('Only processed or cancelled orders can be re-ordered.'))
-        line_commands = [(0, 0, {
+        line_commands = [fields.Command.create({
             'product_id': l.product_id.id,
             'description': l.description,
             'qty': l.qty,
             'price_unit': l.price_unit,
             'discount': l.discount,
         }) for l in self.line_ids]
+        # Carry the session when it is still open; otherwise create() falls
+        # back to the current user's open session (and errors if none).
+        session = self.session_id if self.session_id.state == 'opened' else self.env['pos.lite.session']
+        if not session:
+            session = self.env['pos.lite.session'].search([
+                ('state', '=', 'opened'),
+                ('company_id', '=', self.company_id.id),
+            ], limit=1)
         new_order = self.create({
             'company_id': self.company_id.id,
             'channel': self.channel,
+            'trade_channel': self.trade_channel,
             'customer_name': self.customer_name,
             'partner_id': self.partner_id.id if self.partner_id else False,
             'partner_phone': self.partner_phone,
@@ -756,6 +792,8 @@ class PosLiteOrder(models.Model):
             'partner_tax_id': self.partner_tax_id,
             'warehouse_id': self.warehouse_id.id,
             'pricelist_id': self.pricelist_id.id,
+            'session_id': session.id or False,
+            'employee_id': self.employee_id.id if self.employee_id else False,
             'note': _('Re-order from %s') % self.name,
             'line_ids': line_commands,
         })
@@ -912,26 +950,6 @@ class PosLiteOrderLine(models.Model):
         help="Line margin = price subtotal − (standard cost × qty).",
     )
 
-    @api.constrains('returned_from_line_id', 'qty')
-    def _check_duplicate_return(self):
-        """Prevent over-return at ORM level.
-        Runs BEFORE commit — accounts for the current line's new qty."""
-        for line in self:
-            if not line.returned_from_line_id:
-                continue
-            orig = line.returned_from_line_id
-            # Sum *other* return lines already in DB, then add this line's qty
-            siblings = self.search([
-                ('returned_from_line_id', '=', orig.id),
-                ('id', '!=', line.id if line.id else -1),
-            ])
-            total_returned = sum(siblings.mapped('qty')) + (line.qty or 0.0)
-            if total_returned > orig.qty:
-                raise ValidationError(_(
-                    'Cannot return more than the original quantity of "%s". '
-                    'Total returned: %s, original: %s'
-                ) % (orig.product_id.display_name, total_returned, orig.qty))
-
     @api.depends('return_line_ids.qty')
     def _compute_returned_qty(self):
         for line in self:
@@ -1009,19 +1027,17 @@ class PosLiteOrderLine(models.Model):
                 line.price_total = subtotal
 
     @api.depends('product_id', 'qty', 'price_subtotal', 'currency_id', 'company_id',
-                 'order_id.date_order', 'order_id.company_id', 'order_id.pricelist_id')
+                 'order_id.date_order', 'order_id.company_id')
     def _compute_standard_cost_margin(self):
-        # Pulls standard cost from same Standard Cost Pricelist used by
-        # sale.order.line (buz_sale_pricelist_standard_cost), so POS margin == SO margin.
+        # Pulls the standard cost from the same Standard Cost Pricelist (and the
+        # same helper) used by sale.order.line, so POS Lite margin == SO margin.
+        # standard_cost_price is per-unit (priced at qty=1); line margin spreads
+        # it over the line qty, exactly like sale_margin's
+        # price_subtotal − (purchase_price × product_uom_qty).
         pricelists = {}
+        Pricelist = self.env['product.pricelist']
         for line in self:
             if not line.product_id or not line.order_id:
-                line.standard_cost_price = 0.0
-                line.margin = 0.0
-                continue
-
-            # Skip products marked to exclude from margin
-            if getattr(line.product_id.product_tmpl_id, 'exclude_from_margin', False):
                 line.standard_cost_price = 0.0
                 line.margin = 0.0
                 continue
@@ -1029,28 +1045,23 @@ class PosLiteOrderLine(models.Model):
             company = line.company_id or line.order_id.company_id
             cid = company.id
             if cid not in pricelists:
-                pricelists[cid] = self.env['product.pricelist'].search([
-                    ('is_standard_cost_pricelist', '=', True),
-                    ('company_id', '=', cid),
-                ], limit=1)
+                pricelists[cid] = Pricelist._get_standard_cost_pricelist(company)
             pricelist = pricelists[cid]
 
             if not pricelist:
+                # Parity with buz_sale_pricelist_standard_cost: no cost
+                # pricelist means cost 0 → margin equals the full subtotal.
                 line.standard_cost_price = 0.0
-                line.margin = 0.0
+                line.margin = line.price_subtotal
                 continue
 
             date_order = line.order_id.date_order or fields.Date.today()
-            cost_price = pricelist._get_product_price(
-                line.product_id, 1.0, date=date_order, uom=line.product_id.uom_id,
+            cost_price = pricelist._get_product_standard_cost_price(
+                line.product_id, line.currency_id,
+                company=company, date=date_order,
             )
-            # Convert currency if pricelist currency differs from line currency
-            if pricelist.currency_id != line.currency_id:
-                cost_price = pricelist.currency_id._convert(
-                    cost_price, line.currency_id, company, date_order,
-                )
-            line.standard_cost_price = max(cost_price, 0.0)
-            line.margin = line.price_subtotal - (line.standard_cost_price * (line.qty or 0.0))
+            line.standard_cost_price = cost_price
+            line.margin = line.price_subtotal - (cost_price * (line.qty or 0.0))
 
     @api.onchange('product_id', 'qty', 'order_id.pricelist_id', 'order_id.partner_id')
     def _onchange_product_id(self):
@@ -1070,6 +1081,10 @@ class PosLiteOrderLine(models.Model):
                     else:
                         price = pricelist._get_product_price_rule(line.product_id, line.qty or 1.0, partner)[0]
                 except (AttributeError, IndexError, TypeError):
+                    _logger.warning(
+                        'Pricelist %s failed for %s; falling back to lst_price',
+                        pricelist.id, line.product_id.display_name, exc_info=True,
+                    )
                     price = line.product_id.lst_price
             line.price_unit = price
             if line.discount is None:

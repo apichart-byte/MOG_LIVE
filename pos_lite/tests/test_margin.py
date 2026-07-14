@@ -1,21 +1,18 @@
-"""Margin tests: POS Lite must pull standard cost from Standard Cost Pricelist
-the same way Sales Orders compute margin.
+"""Margin tests — POS Lite must pull standard cost from the same Standard Cost
+Pricelist as Sales Orders and compute margin the same way.
 
 Covers:
-* standard_cost_price / margin on pos.lite.order.line
-* margin / margin_percent on pos.lite.order
-* parity with sale.order.line + sale.order ("เหมือนกับ SO")
-* no-cost-pricelist edge case
-* return-order edge case
+  * standard_cost_price / margin on pos.lite.order.line
+  * margin / margin_percent on pos.lite.order
+  * parity with sale.order.line + sale.order (the "เหมือนกับ SO" requirement)
+  * no-cost-pricelist and return-order edge cases
 """
 
 from odoo.tests import common, tagged
-from odoo import fields
 
 
-@tagged('-at_install', 'post_install')
 class MarginTestBase(common.TransactionCase):
-    """Setup: Standard Cost Pricelist priced at 60 per product."""
+    """Shared setup: a Standard Cost Pricelist priced at 60 for the product."""
 
     @classmethod
     def setUpClass(cls):
@@ -24,9 +21,7 @@ class MarginTestBase(common.TransactionCase):
         cls.company = cls.env.company
         cls.currency = cls.company.currency_id
 
-        cls.category = cls.env['product.category'].create({
-            'name': 'Margin Cat',
-        })
+        cls.category = cls.env['product.category'].create({'name': 'Margin Cat'})
         cls.product = cls.env['product.product'].create({
             'name': 'Margin Widget',
             'type': 'service',
@@ -41,7 +36,7 @@ class MarginTestBase(common.TransactionCase):
             'customer_rank': 1,
         })
 
-        # Sales pricelist — explicit fixed price so both SO and POS get 100
+        # Sales pricelist — explicit fixed price so SO and POS both see 100.
         cls.sales_pricelist = cls.env['product.pricelist'].create({
             'name': 'Margin Sales PL',
             'company_id': cls.company.id,
@@ -54,14 +49,13 @@ class MarginTestBase(common.TransactionCase):
             'fixed_price': 100.0,
         })
 
-        # Standard Cost Pricelist — single source of truth for standard cost
-        # Ensure no pre-existing standard cost pricelist
+        # Standard Cost Pricelist — the single source of standard cost.
+        # Clear any pre-existing one for this company (MOG_DEV data) first.
         existing = cls.env['product.pricelist'].search([
             ('is_standard_cost_pricelist', '=', True),
             ('company_id', '=', cls.company.id),
         ])
-        if existing:
-            existing.sudo().write({'is_standard_cost_pricelist': False})
+        existing.sudo().write({'is_standard_cost_pricelist': False})
 
         cls.cost_pricelist = cls.env['product.pricelist'].create({
             'name': 'Margin Standard Cost PL',
@@ -74,24 +68,22 @@ class MarginTestBase(common.TransactionCase):
             'compute_price': 'fixed',
             'fixed_price': 60.0,
         })
+        # Marking requires Pricing Admin — sudo() sets is_superuser() → bypass.
         cls.cost_pricelist.sudo().write({'is_standard_cost_pricelist': True})
 
         cls.warehouse = cls.env['stock.warehouse'].search([
             ('company_id', '=', cls.company.id),
         ], limit=1)
-
         cls.cash_journal = cls.env['account.journal'].create({
             'name': 'Margin Cash',
             'type': 'cash',
             'code': 'MCSH',
             'company_id': cls.company.id,
         })
-
         cls.employee = cls.env['hr.employee'].create({
             'name': 'Margin Emp',
             'company_id': cls.company.id,
         })
-
         cls.config = cls.env['pos.lite.config'].create({
             'name': 'Margin Cfg',
             'company_id': cls.company.id,
@@ -99,14 +91,11 @@ class MarginTestBase(common.TransactionCase):
             'pricelist_id': cls.sales_pricelist.id,
             'journal_id': cls.cash_journal.id,
         })
-
-        # Ensure sequences start high to avoid conflicts
         cls.env.cr.execute(
             "UPDATE ir_sequence SET number_next = 100000 "
             "WHERE code IN ('pos.lite.session', 'pos.lite.order') AND number_next < 100000"
         )
         cls.env.invalidate_all()
-
         cls.session = cls.env['pos.lite.session'].create({
             'config_id': cls.config.id,
             'employee_id': cls.employee.id,
@@ -147,94 +136,100 @@ class MarginTestBase(common.TransactionCase):
 @tagged('-at_install', 'post_install')
 class TestStandardCostMargin(MarginTestBase):
 
-    def test_cost_from_standard_pricelist(self):
-        """qty=2, unit=100 → subtotal=200, cost=60*2=120, margin=80."""
+    def test_line_standard_cost_and_margin(self):
+        """std cost = 60, qty 2 @ 100 → subtotal 200, margin 80."""
         order = self._draft_pos_order([(self.product.id, 2, 100.0)])
         line = order.line_ids[0]
         self.assertAlmostEqual(line.standard_cost_price, 60.0, places=2)
-        margin = 200.0 - 120.0  # subtotal=200, cost=60*2=120 → margin=80
-        self.assertAlmostEqual(line.margin, margin, places=2)
+        # margin = subtotal - (cost * qty) = 200 - 120 = 80
+        self.assertAlmostEqual(line.margin, 80.0, places=2)
 
     def test_order_margin_and_percent(self):
-        """order.margin=80, order.margin_percent=80/200=0.4."""
+        """order.margin = 80, margin_percent = 80/200 = 0.4 (fraction)."""
         order = self._draft_pos_order([(self.product.id, 2, 100.0)])
         order.invalidate_recordset()
         self.assertAlmostEqual(order.margin, 80.0, places=2)
-        if order.amount_untaxed:
-            self.assertAlmostEqual(order.margin_percent, 80.0 / 200.0, places=4)
-        else:
-            self.assertAlmostEqual(order.margin_percent, 0.0, places=4)
+        # Stored as a fraction (margin / amount_untaxed) → pairs with the
+        # percentage widget, identical to buz_sale_pricelist_standard_cost's SO.
+        self.assertAlmostEqual(order.margin_percent, 0.4, places=4)
 
-    def test_pos_matches_so(self):
-        """POS margin == SO margin (เหมือนกับ SO)."""
-        order = self._draft_pos_order([(self.product.id, 2, 100.0)])
-        order.invalidate_recordset()
+    def test_parity_with_sale_order(self):
+        """POS Lite margin must equal the equivalent SO margin (เหมือนกับ SO)."""
+        if 'margin' not in self.env['sale.order.line']._fields:
+            self.skipTest('sale_margin not installed — SO parity not applicable')
+        pos = self._draft_pos_order([(self.product.id, 2, 100.0)])
+        pos.invalidate_recordset()
         so = self._sale_order([(self.product.id, 2, 100.0)])
 
+        # Same standard cost source
         self.assertAlmostEqual(
-            order.line_ids[0].standard_cost_price,
+            pos.line_ids[0].standard_cost_price,
             so.order_line[0].purchase_price, places=2,
         )
         self.assertAlmostEqual(so.order_line[0].purchase_price, 60.0, places=2)
 
+        # Same line margin
         self.assertAlmostEqual(
-            order.line_ids[0].margin, so.order_line[0].margin, places=2,
+            pos.line_ids[0].margin, so.order_line[0].margin, places=2,
         )
-        # order-level
-        self.assertAlmostEqual(order.margin, so.margin, places=2)
+        # Same order-level margin
+        self.assertAlmostEqual(pos.margin, so.margin, places=2)
         self.assertAlmostEqual(so.margin, 80.0, places=2)
 
     def test_discount_reduces_margin(self):
-        """10% discount cuts revenue but not cost → margin drops."""
+        """A discount cuts revenue but not cost → margin drops."""
         order = self._draft_pos_order([(self.product.id, 1, 100.0)])
         line = order.line_ids[0]
         line.discount = 10.0  # percent → 10% off
         line.discount_type = 'percent'
         order.invalidate_recordset()
-        # subtotal = 100 * 0.9 = 90; cost = 60; margin = 30
+        # subtotal = 100 * 0.9 = 90 ; cost = 60 ; margin = 30
         self.assertAlmostEqual(line.price_subtotal, 90.0, places=2)
         self.assertAlmostEqual(line.standard_cost_price, 60.0, places=2)
         self.assertAlmostEqual(line.margin, 30.0, places=2)
         self.assertAlmostEqual(order.margin, 30.0, places=2)
 
     def test_no_standard_cost_pricelist_means_zero_cost(self):
-        """Without cost pricelist, cost=0 and margin=full subtotal."""
+        """Without a cost pricelist, cost = 0 and margin = full subtotal."""
         self.cost_pricelist.sudo().write({'is_standard_cost_pricelist': False})
         order = self._draft_pos_order([(self.product.id, 1, 100.0)])
         order.invalidate_recordset()
         self.assertAlmostEqual(order.line_ids[0].standard_cost_price, 0.0, places=2)
         self.assertAlmostEqual(order.line_ids[0].margin, 100.0, places=2)
         self.assertAlmostEqual(order.margin, 100.0, places=2)
-        # Restore for other tests in same TransactionCase (they'd rollback,
-        # but explicit restore avoids bleed if cursor reused).
+        # Restore for other tests in the same TransactionCase they'd rollback,
+        # but be explicit to avoid bleed if a future test reuses the cursor.
         self.cost_pricelist.sudo().write({'is_standard_cost_pricelist': True})
 
     def test_product_without_cost_rule_matches_so(self):
-        """Product with no rule on cost pricelist behaves identically.
-        Odoo falls back to list_price, so cost=50 matches SO."""
+        """A product with no rule on the cost pricelist is costed identically on
+        POS Lite and SO — the shared helper guarantees parity (Odoo falls back
+        to list_price, so the cost is the same value on both sides)."""
         other = self.env['product.product'].create({
-            'name': 'Other Widget',
+            'name': 'No Cost Product',
             'type': 'service',
             'categ_id': self.category.id,
             'sale_ok': True,
             'list_price': 50.0,
             'taxes_id': [(5, 0, 0)],
         })
-        order = self._draft_pos_order([(other.id, 1, 50.0)])
-        order.invalidate_recordset()
+        if 'margin' not in self.env['sale.order.line']._fields:
+            self.skipTest('sale_margin not installed — SO parity not applicable')
+        pos = self._draft_pos_order([(other.id, 1, 50.0)])
+        pos.invalidate_recordset()
         so = self._sale_order([(other.id, 1, 50.0)])
-
+        # Same source + same helper → identical cost regardless of fallback.
         self.assertAlmostEqual(
-            order.line_ids[0].standard_cost_price,
+            pos.line_ids[0].standard_cost_price,
             so.order_line[0].purchase_price, places=2,
         )
-        self.assertAlmostEqual(order.margin, so.margin, places=2)
+        self.assertAlmostEqual(pos.margin, so.margin, places=2)
 
-    def test_return_order_margin_negative(self):
-        """Return order negates margin to match negative amount_untaxed."""
+    def test_return_order_negates_margin(self):
+        """Returns reverse the profit impact, mirroring the negated amount_untaxed."""
         order = self._draft_pos_order([(self.product.id, 1, 100.0)])
         order.invalidate_recordset()
-        self.assertAlmostEqual(order.margin, 40.0, places=2)  # 100 - 60 = 40
+        self.assertAlmostEqual(order.margin, 40.0, places=2)  # 100 - 60
 
         return_order = self.env['pos.lite.order'].create({
             'company_id': self.company.id,
@@ -242,7 +237,7 @@ class TestStandardCostMargin(MarginTestBase):
             'partner_id': self.partner.id,
             'warehouse_id': self.warehouse.id,
             'pricelist_id': self.sales_pricelist.id,
-            'session_id': self.session.id,
+            'is_return': True,
             'return_of_order_id': order.id,
             'line_ids': [(0, 0, {
                 'product_id': self.product.id,
@@ -252,9 +247,9 @@ class TestStandardCostMargin(MarginTestBase):
             })],
         })
         return_order.invalidate_recordset()
-
-        # Line margin stays positive (subtotal=100, cost=60, margin=40).
-        # Order-level negates it → margin=-40. amount_untaxed=-100 → rate=0.4.
+        # Line margin is the item's gross margin (positive), but the order
+        # negates it so profit reporting matches the negative amount_untaxed.
         self.assertAlmostEqual(return_order.line_ids[0].margin, 40.0, places=2)
         self.assertAlmostEqual(return_order.margin, -40.0, places=2)
+        # amount_untaxed is negative for returns, margin is negative → rate stays positive
         self.assertAlmostEqual(return_order.margin_percent, 0.4, places=4)
