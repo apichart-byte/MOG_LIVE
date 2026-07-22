@@ -1,0 +1,497 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <data>
+    <record id="paperformat_invoice" model="report.paperformat">
+        <field name="name">Invoice A4</field>
+        <field name="default" eval="True"/>
+        <field name="format">A4</field>
+        <field name="orientation">Portrait</field>
+        <field name="margin_top">10</field>
+        <field name="margin_bottom">10</field>
+        <field name="margin_left">4</field>
+        <field name="margin_right">4</field>
+        <field name="header_line" eval="False"/>
+        <field name="header_spacing">0</field>
+        <field name="dpi">90</field>
+    </record>
+
+
+    <!-- Main Template -->
+    <template id="report_invoice">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+
+                        <style>
+                            @font-face {
+                                font-family: 'Sarabun';
+                                src: url('/buz_custom_invoice/static/fonts/Sarabun-Bold.ttf') format('truetype');
+                            }
+                            .page {
+                                font-family: 'Sarabun', sans-serif;
+                                font-size: 20px;
+                                padding: 0;
+                                width: 100%;
+                                height: 100%;
+                                margin: 0;
+                            }
+                            .header-section {
+                                display: flex;
+                                justify-content: space-between;
+                                margin-bottom: 10px;
+                                margin-top: 36px;
+                            }
+                            .header-left { width: 60%; }
+                            .header-right {
+                                width: 40%;
+                                text-align: right;
+                            }
+                            .customer-info { margin-bottom: 10px; }
+                            .product-section { margin: 10px 0; }
+                            .product-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-bottom: 20px;
+                            }
+                            .product-table th, .product-table td {
+                                padding: 4px;
+                                text-align: center;
+                                vertical-align: middle;
+                                border: 1px solid #000;
+                                line-height: 1.5;
+                                font-size: 18px;
+                            }
+                            .product-table th {
+                                background-color: #f8f9fa;
+                                font-weight: bold;
+                                border-top: 1px solid #000;
+                                border-bottom: 1px solid #000;
+                            }
+                            .product-table th.code, .product-table td.code {
+                                text-align: left;
+                            }
+                            .product-table th.description, .product-table td.description {
+                                text-align: left;
+                            }
+                            .text-right { text-align: right; }
+                            .amount-section {
+                                display: flex;
+                                justify-content: space-between;
+                                margin-top: 10px;
+                            }
+                            .amount-words { width: 60%; }
+                            .amount-totals {
+                                width: 40%;
+                                text-align: right;
+                            }
+                            .header-title { margin-bottom: 15px; }
+                            .document-title {
+                                margin: 0;
+                                padding: 0;
+                                text-align: center;
+                            }
+                            .document-title h2, .document-title h1 {
+                                margin: 0;
+                                padding: 0;
+                                font-weight: bold;
+                            }
+                            .document-title h2 {
+                                font-size: 18px;
+                                margin-top: 10px;
+                            }
+
+                            .order-info {
+                                display: flex;
+                                justify-content: space-between;
+                            }
+                            .order-info > div {
+                                margin-right: 2cm;
+                            }
+                            .invoice-origin {
+                                margin-left: 10mm;
+                            }
+                            .product-table tfoot {
+                                border-bottom: 1px solid #000;
+                            }
+                            .footer-section {
+                                display: flex;
+                                justify-content: space-between;
+                                margin-top: 10px;
+                                padding-top: 10px;
+                            }
+                            .footer-box {
+                                width: 32%;
+                                text-align: center;
+                                border: 1px solid #000;
+                                border-top: 1px solid #000;
+                                padding: 10px;
+                                height: 4cm;
+                                margin: 2px;
+                            }
+                            .product-table tbody {
+                                height: 15cm;
+                                overflow-y: auto;
+                            }
+                            .invoice-copy-page {
+                                position: relative;
+                                box-sizing: border-box;
+                                min-height: 277mm;
+                                font-size: 94%;
+                            }
+                            .invoice-copy-label {
+                                display: inline-flex;
+                                flex-direction: column;
+                                align-items: center;
+                                justify-content: center;
+                                width: 110px;
+                                height: 42px;
+                                box-sizing: border-box;
+                                border-radius: 4px;
+                                border: 1px solid #888;
+                                padding: 0 8px;
+                                font-size: 16px;
+                                line-height: 18px;
+                                text-align: center;
+                                margin-top: -56.4px;
+                                white-space: nowrap;
+                            }
+                            .invoice-copy-label strong {
+                                display: block;
+                                line-height: 18px;
+                            }
+                        </style>
+
+                        <t t-foreach="['original', 'copy']" t-as="doc_type">
+                            <div class="invoice-copy-page" t-attf-style="#{doc_type == 'copy' and 'page-break-before: always;' or ''}">
+
+
+                        <t t-set="line_list" t-value="doc.invoice_line_ids"/>
+                        <t t-set="items_per_page" t-value="10"/>
+                        <t t-set="groups_of_7" t-value="[line_list[i:i+items_per_page] for i in range(0, len(line_list), items_per_page)]"/>
+                        <t t-set="page_number" t-value="1"/>
+                        <t t-set="total_pages" t-value="groups_of_7 and len(groups_of_7) or 0"/>
+
+                        <t t-foreach="groups_of_7" t-as="group">
+                          <div t-attf-style="#{page_number != 1 and 'page-break-before: always;' or ''}">
+
+
+                        <t t-call="buz_custom_invoice.report_invoice_document_style"/>
+                        <!-- Header Section -->
+                        <div class="row mb-2" style="padding-top: 0;"> <!-- Remove padding from the top -->
+                            <div class="col-8">
+                                <div style="font-size: 20px;">
+                                    <div class="mb-1"><strong>บริษัท โมเก้น จำกัด (สำนักงานใหญ่)</strong></div>
+                                    <div style="font-size: 18px;">9 หมู่ 12 ตําบลบึงคําพร้อย อําเภอลําลูกกา จ.ปทุมธานี 12150</div>
+                                    <div style="font-size: 18px;">เลขที่ประจําตัวผู้เสียภาษี 0105547076103</div>
+                                    <div style="font-size: 18px;">โทร 02 1509710 แฟกซ์ 02 1528803 E-mail: contact@mogen.co.th</div>
+                                </div>
+                            </div>
+                            <div class="col-4 text-end">
+                                <img src="/buz_custom_invoice/static/logo/LOGO%20MOGEN.png"
+                                     style="width: 180px; height: auto; object-fit: contain;" alt="Company Logo"/>
+                            </div>
+                        </div>
+
+
+                        <!-- Title Section -->
+                        <div class="row mb-2 justify-content-end" style="padding-right: 9.4px;">
+                            <div
+                            class="invoice-copy-label">
+                            <t t-if="doc_type == 'original'">
+                                <strong>ต้นฉบับ / ORIGINAL</strong>
+                                ลูกค้า
+                            </t>
+                            <t t-if="doc_type == 'copy'">
+                                <strong>สำเนา / COPY</strong>
+                                บัญชี
+                            </t>
+                        </div>
+                    </div>
+
+                         <!-- Document Title -->
+                         <div class="row mb-2">
+                            <div class="col-12 text-center">
+                                <h2 style="margin: 0; padding: 0; font-weight: bold; font-size: 25px; margin-top: 50px;">ใบแจ้งหนี้ / Invoice</h2>
+                                <!-- <p style="margin: 0; padding: 0; font-size: 18px; font-weight: bold;">Invoice</p> -->
+                            </div>
+                        </div>
+
+
+                        <div style="display: flex; justify-content: space-between; margin-top: -80px; font-size: 20px;">
+                            <!-- ฝั่งซ้าย: รหัสลูกค้า -->
+                            <div style="width: 50%; text-align: left;margin-top: 40px;">
+                                <strong style="width: auto; display: inline-block;"></strong>
+                                <span t-field="doc.invoice_origin"/>
+                                <t t-if="doc.picking_ids">
+                                    <t t-set="picking_size" t-value="len(doc.picking_ids)"/>
+                                    <t t-foreach="doc.picking_ids" t-as="picking">
+                                        <span t-field="picking.name"/>
+                                        <t t-if="picking_index + 1 &lt; picking_size">, </t>
+                                    </t>
+                                </t>
+                            </div>
+
+                            <!-- ฝั่งขวา: เลขที่เอกสาร + วันที่ -->
+                            <div style="width: 50%; text-align: right;">
+                                <div class="info-box">
+                                    <div class="mb-2">
+                                        <strong style="width: auto; display: inline-block;">เลขที่เอกสาร/No :</strong>
+                                        <span t-field="doc.name"/>
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong style="width: auto; display: inline-block;">วันที่ :</strong>
+                                        <span t-field="doc.invoice_date" t-options='{"widget": "date"}'/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+
+
+                         <!-- Document Info and Customer Information -->
+                         <div style="display: table; width: 100%; margin-top: 10px;">
+                            <div style="display: table-row;">
+                                <!-- ซ้าย -->
+                                <div style="display: table-cell; width: 50%; vertical-align: top; padding-right: 5px;">
+                                    <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; height: 192px; box-sizing: border-box;">
+                                        <div style="display: table-row;"><strong style="display: table-cell; width: 140px; padding-right: 10px;">ชื่อลูกค้า :</strong><span t-field="doc.partner_id.name"/> <span t-field="doc.partner_id.branch"/></div>
+                                        <div style="display: table-row;"><strong style="display: table-cell; width: 140px; padding-right: 10px;">เลขประจำตัวผู้เสียภาษี :</strong><span t-field="doc.partner_id.vat"/></div>
+                                        <div style="display: table-row;"><strong style="display: table-cell; width: 140px; padding-right: 10px;">ที่อยู่ :</strong>
+                                            <span style="display: table-cell;"><span t-field="doc.partner_id.street"/>
+                                        </span></div>
+                                        <div style="display: table-row;"><span style="display: table-cell; width: 140px;"></span><span style="display: table-cell;">
+                                                <span t-field="doc.partner_id.street2"/>
+                                                <span t-field="doc.partner_id.city"/>
+                                            <span t-field="doc.partner_id.state_id.name"/>
+                                            <span t-field="doc.partner_id.zip"/>
+                                        </span></div>
+                                        <div style="display: table-row;"><strong style="display: table-cell; width: 140px; padding-right: 10px;">โทรศัพท์ :</strong><span t-esc="(doc.partner_id.phone or '').replace('+66', '0', 1).replace(' ', '')"/></div>
+                                    </div>
+                                </div>
+
+                                <!-- ขวา -->
+                                <div style="display: table-cell; width: 50%; vertical-align: top; padding-left: 5px;">
+                                    <div style="border: 1px solid black; padding: 10px; border-radius: 4px; min-height: 192px; height: 192px; box-sizing: border-box;">
+                                        <div style="display: flex; margin-bottom: 2px;">
+                                            <div style="width: 50%;">
+                                              <strong style="display: inline-block; width: 90px; margin-right: 10px;">เลขที่ใบสั่งขาย :</strong>
+                                              <t t-set="so" t-value="doc.invoice_line_ids and doc.invoice_line_ids[0].sale_line_ids and doc.invoice_line_ids[0].sale_line_ids[0].order_id"/>
+                                              <span t-esc="(so and so.client_order_ref) or (so and so.name) or ''"/>
+                                            </div>
+                                          </div>
+                                        <div style="display: block; margin-top: 2px; margin-bottom:2px;">
+                                            <div style="width: 65%;">
+                                                <strong style="display: inline-block; width: 90px; margin-right: 10px;">พนักงานขาย :</strong>
+                                                <span t-field="doc.invoice_user_id.employee_id.name"/>
+                                            </div>
+                                            <div style="width: 35%;">
+                                                <strong style="display: inline-block; width: 90px; margin-right: 10px;">เงื่อนไข :</strong>
+                                            </div>
+                                        </div>
+                                        <div style="display: block; margin-top: 2px; margin-bottom:2px;">
+                                            <div style="width: 65%;">
+                                                <strong style="display: inline-block; width: 90px; margin-right: 10px;">วันครบกำหนด :</strong>
+                                                <span t-field="doc.invoice_date_due" t-options='{"format": "dd/MM/yyyy"}'/>
+                                            </div>
+                                            <div style="width: 35%;">
+                                                <strong style="display: inline-block; width: 90px; margin-right: 10px;">Credit :</strong>
+                                                <span t-esc="doc.invoice_payment_term_id.name or ''"/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                          <!-- Product Lines and -->
+                         <div class="product-section" style="font-size: 12px;">
+                          <table class="product-table" style="width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 5px; font-size: 12px;">
+                            <thead>
+                                <tr>
+                                    <th style="width: 6%; text-align: center; border: 1px solid black; padding: 2px;">ลำดับ<br/>
+                                        <span style="font-size: 12px;">(No)</span></th>
+                                    <th style="width: 62%; text-align: center; border: 1px solid black; padding: 2px;">รายการ<br/>
+                                        <span style="font-size: 12px;">(Description)</span></th>
+                                    <th style="width: 7%; text-align: center; border: 1px solid black; padding: 2px;">หน่วย<br/>
+                                        <span style="font-size: 12px;">(Unit)</span></th>
+                                    <th style="width: 7%; text-align: center; border: 1px solid black; padding: 2px;">ราคา/หน่วย<br/>
+                                        <span style="font-size: 12px;">(Unit Price)</span></th>
+                                    <th style="width: 7%; text-align: center; border: 1px solid black; padding: 2px;">ส่วนลด<br/>
+                                        <span style="font-size: 12px;">(Discount)</span></th>
+                                    <th style="width: 12%; text-align: center; border: 1px solid black; padding: 2px;">จำนวนเงิน<br/>
+                                        <span style="font-size: 12px;">(Amount)</span></th>
+                                </tr>
+                            </thead>
+                            <tbody style="height: 240px;">
+                                <t t-set="max_lines" t-value="items_per_page"/>
+                                <t t-set="line_number" t-value="((page_number - 1) * max_lines) + 1"/>
+                                <t t-set="current_line_number" t-value="line_number"/>
+
+                                <t t-foreach="group" t-as="line">
+                                    <tr style="font-size: 12px; height: 30px;">
+                                        <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; text-align: center; vertical-align: middle;">
+                                            <span t-esc="current_line_number"/>
+                                        </td>
+                                        <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; text-align: left; vertical-align: middle; padding-left: 4px;">
+                                            <div style="
+                                                display: -webkit-box;
+                                                -webkit-box-orient: vertical;
+                                                -webkit-line-clamp: 2;
+                                                overflow: hidden;
+                                                text-overflow: ellipsis;
+                                                white-space: normal;
+                                                line-height: 1.25em;
+                                                max-height: 2.5em;">
+                                                <span t-field="line.name"/>
+                                            </div>
+                                        </td>
+                                        <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; text-align: center; vertical-align: middle;">
+                                            <span t-field="line.product_uom_id.name"/>
+                                        </td>
+                                        <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; text-align: right; vertical-align: middle;">
+                                            <span t-field="line.price_unit" t-options='{"widget": "float", "precision": 2}'/>
+                                        </td>
+                                        <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; text-align: right; vertical-align: middle;">
+                                            <t t-if="line.discount_fixed">
+                                                <span t-field="line.discount_fixed" t-options='{"widget": "float", "precision": 2}'/> ฿
+                                            </t>
+                                        </td>
+                                        <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; text-align: right; vertical-align: middle;">
+                                            <span t-field="line.price_subtotal" t-options='{"widget": "float", "precision": 2}'/>
+                                        </td>
+                                    </tr>
+                                    <t t-set="current_line_number" t-value="current_line_number + 1"/>
+                                </t>
+
+
+                                    <t t-foreach="range(len(group), max_lines)" t-as="empty_line">
+                                         <tr style="font-size: 12px; height: 30px;">
+                                             <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; height: 30px;">&#160;</td>
+                                             <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; height: 30px;">&#160;</td>
+                                             <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; height: 30px;">&#160;</td>
+                                             <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; height: 30px;">&#160;</td>
+                                             <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; height: 30px;">&#160;</td>
+                                             <td style="border-left: 1px solid black; border-right: 1px solid black; border-top: none; border-bottom: none; height: 30px;">&#160;</td>
+                                         </tr>
+                                    </t>
+</tbody>
+                                <!-- Totals -->
+                                <tfoot>
+                                    <tr>
+                                        <td colspan="2" style="text-align: left; border-top: 1px solid #000; line-height: 1; vertical-align: bottom; padding: 0;">
+                                            <div style="min-height: 66px; height: 66px; display: flex; align-items: flex-end; padding: 5px 10px; box-sizing: border-box; font-size: 16px; line-height: 1.2;">
+                                                <strong style="margin-right: 10px;">จำนวนเงิน (ตัวอักษร) :</strong>
+                                                <span t-esc="doc.amount_total_text_th"/>
+                                            </div>
+
+                                        </td>
+                                        <td colspan="3" style="text-align: right; border-top: 1px solid #000; line-height: 22px; font-size: 18px; vertical-align: top; white-space: nowrap;">
+                                            <div style="font-weight: bold; text-align: left; line-height: 22px;">
+                                                รวมเป็นเงิน / Total Amount<br/>
+                                                ภาษีมูลค่าเพิ่ม 7% / VAT 7%<br/>
+                                                จำนวนเงินรวมทั้งสิ้น / Grand Total
+                                            </div>
+                                        </td>
+                                        <td style="text-align: right; border-top: 1px solid #000; line-height: 22px; font-size: 18px; vertical-align: top; white-space: nowrap;">
+                                            <div>
+                                                <t t-set="amount_total" t-value="doc.amount_untaxed or 0.0"/>
+                                                <t t-set="amount_tax" t-value="doc.amount_tax or 0.0"/>
+                                                <t t-set="grand_total" t-value="doc.amount_total or 0.0"/>
+
+                                                <div style="height: 22px; line-height: 22px;"><span t-esc="'{:,.2f}'.format(amount_total)"/></div>
+                                                <div style="height: 22px; line-height: 22px;"><span t-esc="'{:,.2f}'.format(amount_tax)"/></div>
+                                                <div style="height: 22px; line-height: 22px;"><span t-esc="'{:,.2f}'.format(grand_total)"/></div>
+                                            </div>
+                                        </td>
+
+
+
+                                    </tr>
+                                </tfoot>
+                            </table>
+
+                                            <div style="min-height: 145px; height: 145px; margin-top: 10px; padding: 8px 10px; box-sizing: border-box; border-bottom: 1.5px solid #000;">
+                                                <div style="line-height: 1.25; font-size: 16px;">
+                                                    <strong style="display: inline-block; width: 70px; font-size: 16px;">หมายเหตุ</strong><span style="display: inline-block; margin-bottom: 1.7px;"><span style="display: inline-block; width: 24px;">1.</span>ได้ระบทราบกำหนดเวลาชำระเงินตามทีระบุไว้ข้างต้นแล้ว</span>
+                                                    <div style="margin-left: 70px; margin-bottom: 1.7px;"><span style="display: inline-block; width: 24px; vertical-align: top;">2.</span><span style="display: inline-block; vertical-align: top;">กรุณาสั่งจ่ายเช็คขีดคร่อมสั่งจ่าย บจ.โมเก้น<br/>หรือโอนเข้าบัญชี Kasikorn Bank ( KBANK =กสิกรไทย ) MOGEN CO., LTD   Account number  464-1-00774-4</span></div>
+                                                    <div style="margin-left: 70px; margin-bottom: 1.7px;"><span style="display: inline-block; width: 24px;">3.</span>ในกรณีผิดนัดชำระหนี้ ทางบริษัทฯ จะคิดดอกเบี้ย 1.25 ต่อเดือน ของยอดหนี้ค่าสินค้า</div>
+                                                </div>
+                                            </div>
+                        </div>
+
+
+                        <t t-set="page_number" t-value="page_number + 1"/>
+                           </div></t>
+
+                            <!-- เงื่อนไขแสดงลายเซ็นเฉพาะหน้าสุดท้าย -->
+                            <t t-if="page_number == len(groups_of_7)">
+                                <!-- ลายเซ็นหรือหมายเหตุ -->
+                            </t>
+
+
+
+                                      <!-- Footer Section -->
+                                     <div class="footer-section" style="display: flex; flex-direction: row; justify-content: space-between; align-items: flex-start; gap: 20px; width: 100%;">
+                                         <!-- <div class="footer-box" style="font-size: 18px;">
+                                             <div style="text-align: left;">
+                                                 สินค้าตามรายการข้างต้น แม้จะได้ส่งมอบให้แก่ผู้ซื้อแล้วแต่ยังเป็นกรรมสิทธิ์ของผู้ขาย จนกว่า ผู้ซื้อจะได้รับชำระเงินให้แก่ บริษัทฯ ดังกล่าวแล้วเท่านั้น
+                                             </div>
+                                             <div style="text-align: center; margin-top: -2em;">
+                                                 <br/>
+                                                 *กรุณาจ่ายเช็คขีดคร่อมสั่งจ่าย*
+                                                 <br/>
+                                                 *บริษัท โมเก้น จำกัด* และชีดฆ่าหรือผู้ถือ
+                                             </div>
+                                         </div> -->
+                                         <div class="footer-box" style="width: 35%; height: 4cm; box-sizing: border-box; border-radius: 18px; padding: 8px; margin: 0 auto; text-align: center; font-size: 16px; overflow: hidden;">
+                                             <div style="margin-bottom: 10px;">ได้รับสินค้าดังกล่าวใว้ถูกต้องในสภาพเรียบร้อยแล้ว</div>
+                                             <br/>
+                                             ผู้รับของ___________________________
+                                             <br/>
+                                             <div style="margin-top: 13px;">วันที่_____/_____/_____ </div>
+                                             <br/>
+                                             <!-- ผู้ส่งของ___________________________
+                                             <br/>
+                                             วันที่___/___/___ -->
+                                         </div>
+                                         <div class="footer-box" style="width: 35%; height: 4cm; box-sizing: border-box; border-radius: 18px; padding: 8px; margin: 0 auto; text-align: center; font-size: 16px; overflow: hidden;">
+                                             ในนาม
+                                             <br/>
+                                             บริษัท โมเก้น จำกัด (สำนักงานใหญ่)
+                                             <br/>
+
+                                             <br/>
+                                             <div style="margin-top: 23px;">วันที่_____/_____/_____ </div>
+                                             <br/>
+                                             <!-- AUTHORIZED -->
+                                         </div>
+                                     </div>
+
+
+
+
+
+
+
+                   </div>
+               </t>
+                    </div>
+            </t></t>
+        </t>
+        </template>
+
+
+    <record id="action_report_invoice" model="ir.actions.report">
+        <field name="name">ใบแจ้งหนี้/Invoice</field>
+        <field name="model">account.move</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">buz_custom_invoice.report_invoice</field>
+        <field name="report_file">buz_custom_invoice.report_invoice</field>
+        <field name="paperformat_id" ref="paperformat_invoice"/>
+        <field name="binding_model_id" ref="account.model_account_move"/>
+        <field name="binding_type">report</field>
+    </record>
+    </data>
+</odoo>

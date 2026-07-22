@@ -42,8 +42,8 @@ class EmployeeAdvanceBox(models.Model):
         string='Balance',
         compute='_compute_balance',
         currency_field='currency_id',
-        store=False,
-        help='Current balance in the advance box (computed live from GL)'
+        store=True,
+        help='Current balance in the advance box'
     )
     currency_id = fields.Many2one(
         'res.currency',
@@ -88,21 +88,28 @@ class EmployeeAdvanceBox(models.Model):
             else:
                 record.name = "Advance Box"
 
+    @api.depends('account_id', 'employee_id', 'journal_id')
     def _compute_balance(self):
         """
-        Compute balance from journal entries (live, not stored).
-        Filter by employee partner to separate each employee's advance box.
+        Compute balance from journal entries.
+        ALWAYS filter by employee partner to separate each employee's advance box.
         Use account_id (113001) with partner filtering for balance calculation.
         """
         for record in self:
+            _logger.info("🔍 BALANCE DEBUG: Computing for advance box %s (employee: %s)", 
+                       record.id, record.employee_id.name)
+            
             # Get employee partner for filtering
             partner_id = record._get_employee_partner()
             
             if not partner_id:
+                _logger.warning("⚠️ BALANCE DEBUG: No partner found for employee %s, setting balance to 0", 
+                              record.employee_id.name)
                 record.balance = 0.0
                 continue
             
             # Use account_id (113001 เงินทดรองจ่าย) with partner filtering
+            # IMPORTANT: Exclude reconciled entries to match GL report behavior
             if record.account_id and record.employee_id:
                 domain = [
                     ('account_id', '=', record.account_id.id),
@@ -111,17 +118,27 @@ class EmployeeAdvanceBox(models.Model):
                     ('full_reconcile_id', '=', False),  # ไม่นับรายการที่ reconcile แล้ว
                 ]
                 
-                # ใช้ read_group เพื่อประสิทธิภาพ (ไม่ต้อง load ทุก record)
-                result = self.env['account.move.line'].read_group(
-                    domain, ['debit', 'credit'], []
-                )
-                if result:
-                    total_debit = result[0].get('debit', 0) or 0
-                    total_credit = result[0].get('credit', 0) or 0
-                    record.balance = total_debit - total_credit
-                else:
-                    record.balance = 0.0
+                _logger.info("📋 BALANCE DEBUG: Searching account %s (%s) with partner %s", 
+                           record.account_id.code, record.account_id.name, partner_id)
+                
+                # ใช้ search แทน read_group เพื่อ debug ง่ายขึ้น
+                lines = self.env['account.move.line'].search(domain)
+                _logger.info("📋 BALANCE DEBUG: Found %d lines", len(lines))
+                
+                total_debit = sum(lines.mapped('debit'))
+                total_credit = sum(lines.mapped('credit'))
+                balance = total_debit - total_credit
+                
+                _logger.info("💰 BALANCE DEBUG: Debit: %s, Credit: %s, Balance: %s", 
+                           total_debit, total_credit, balance)
+                           
+                for line in lines:
+                    _logger.info("  📝 Line: %s | %s | Dr: %s | Cr: %s | Move: %s", 
+                               line.date, line.name, line.debit, line.credit, line.move_id.name)
+                
+                record.balance = balance
             else:
+                _logger.warning("⚠️ BALANCE DEBUG: Missing account or employee")
                 record.balance = 0.0
 
     def _refresh_balance_simple(self):

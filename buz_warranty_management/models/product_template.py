@@ -1,42 +1,78 @@
-from odoo import models, fields, api
+from odoo import api, fields, models
 
 
 class ProductTemplate(models.Model):
     _inherit = 'product.template'
 
+    warranty_duration_override = fields.Integer(
+        string='Product Warranty Duration',
+        default=0,
+        help='Warranty duration used when overriding the category setting.',
+    )
+    warranty_period_unit_override = fields.Selection([
+        ('month', 'Month(s)'),
+        ('year', 'Year(s)'),
+    ], string='Product Warranty Period Unit', default='month')
     warranty_duration = fields.Integer(
         string='Warranty Duration',
-        default=0,
-        help='Warranty period from delivery date'
+        compute='_compute_warranty_period',
+        store=True,
+        readonly=True,
     )
     warranty_period_unit = fields.Selection([
         ('month', 'Month(s)'),
         ('year', 'Year(s)'),
-    ], string='Period Unit', default='month', help='Unit for warranty duration')
+    ], string='Period Unit', compute='_compute_warranty_period', store=True, readonly=True)
     warranty_condition = fields.Text(
         string='Warranty Terms & Conditions',
-        help='Terms and conditions applicable to this warranty'
+        related='categ_id.warranty_condition',
+        readonly=True
     )
     warranty_type = fields.Selection([
-        ('replacement', 'Replacement'),
+        ('replacement', 'Replace'),
         ('repair', 'Repair'),
         ('refund', 'Refund'),
-    ], string='Warranty Type', default='repair')
+    ], string='Warranty Type', related='categ_id.warranty_type', readonly=True)
     service_product_id = fields.Many2one(
         'product.product',
         string='Service Product',
-        domain=[('type', '=', 'service')],
-        help='Service product used for out-of-warranty repairs'
+        related='categ_id.service_product_id',
+        readonly=True
     )
     allow_out_of_warranty = fields.Boolean(
         string='Allow Out-of-Warranty Service',
-        default=True,
-        help='Allow creating quotations for expired warranty claims'
+        related='categ_id.allow_out_of_warranty',
+        readonly=True
     )
     warranty_card_count = fields.Integer(
         string='Warranty Cards',
         compute='_compute_warranty_card_count'
     )
+
+    @api.depends(
+        'warranty_duration_override',
+        'warranty_period_unit_override',
+        'categ_id.warranty_duration',
+        'categ_id.warranty_period_unit',
+    )
+    def _compute_warranty_period(self):
+        for record in self:
+            if record.warranty_duration_override:
+                record.warranty_duration = record.warranty_duration_override
+                record.warranty_period_unit = record.warranty_period_unit_override
+            else:
+                record.warranty_duration = record.categ_id.warranty_duration
+                record.warranty_period_unit = record.categ_id.warranty_period_unit
+
+    def _get_effective_warranty_period(self):
+        """Return the warranty values to snapshot on a warranty card."""
+        self.ensure_one()
+        if self.warranty_duration <= 0:
+            return {'warranty_duration': 0, 'warranty_period_unit': False}
+        return {
+            'warranty_duration': self.warranty_duration,
+            'warranty_period_unit': self.warranty_period_unit,
+        }
 
     def _compute_warranty_card_count(self):
         for record in self:

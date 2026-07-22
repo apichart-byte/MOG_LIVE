@@ -8,6 +8,18 @@ def pre_init_hook(env):
     """Clean up wizard tables before module upgrade to prevent constraint errors"""
     cr = env.cr
     try:
+        # Drop the old RESTRICT FK constraint on wht_tax_id so Odoo can
+        # recreate it with SET NULL (as defined in the field definition)
+        cr.execute("""
+            ALTER TABLE account_move
+            DROP CONSTRAINT IF EXISTS account_move_wht_tax_id_fkey;
+        """)
+        _logger.info("🔧 Dropped old account_move_wht_tax_id_fkey constraint")
+    except Exception as e:
+        _logger.warning("⚠️ Could not drop wht_tax_id FK constraint: %s", str(e))
+        cr.rollback()
+
+    try:
         # Clean up advance_refill_base_wizard table if it exists
         cr.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'advance_refill_base_wizard')")
         if cr.fetchone()[0]:

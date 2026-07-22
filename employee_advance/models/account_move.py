@@ -8,13 +8,54 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
+    def _auto_init(self):
+        """Drop the old RESTRICT FK constraint on wht_tax_id before ORM recreates it.
+
+        The field wht_tax_id (Many2one to account.tax) previously had no ondelete,
+        which defaults to RESTRICT. This blocks deletion of account.move records
+        during payment registration. We drop the old constraint so the ORM can
+        recreate it with SET NULL (as specified in the field definition).
+        """
+        cr = self.env.cr
+        try:
+            cr.execute(
+                "ALTER TABLE account_move "
+                "DROP CONSTRAINT IF EXISTS account_move_wht_tax_id_fkey"
+            )
+        except Exception:
+            pass
+        return super()._auto_init()
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        """Sanitize wht_tax_id to prevent FK violation from field name collision.
+
+        The l10n_th_account_tax payment register wizard passes 'default_wht_tax_id'
+        in context, which is an account.withholding.tax ID. Odoo ORM auto-fills
+        this into account_move.wht_tax_id (which references account.tax).
+        We must validate/strip the ID if it doesn't exist in account.tax.
+        """
+        AccountTax = self.env['account.tax']
+        for vals in vals_list:
+            wht_tax_id = vals.get('wht_tax_id')
+            if wht_tax_id:
+                # Check if the ID actually exists in account.tax
+                if not AccountTax.browse(wht_tax_id).exists():
+                    _logger.info(
+                        "Stripped invalid wht_tax_id=%s from account.move create "
+                        "(likely an account.withholding.tax ID, not account.tax)",
+                        wht_tax_id,
+                    )
+                    vals['wht_tax_id'] = False
+        return super().create(vals_list)
+
     # Metadata to support advance clearing and manual linking
     expense_sheet_id = fields.Many2one('hr.expense.sheet', string='Expense Sheet', copy=False)
     advance_box_id = fields.Many2one('employee.advance.box', string='Advance Box', copy=False)
     is_expense_advance_bill = fields.Boolean(string='Is Expense Advance Bill', default=False, copy=False)
     
     # WHT Certificate support
-    wht_tax_id = fields.Many2one('account.tax', string='WHT Tax', copy=False)
+    wht_tax_id = fields.Many2one('account.tax', string='WHT Tax', copy=False, ondelete='set null')
     wht_base_amount = fields.Monetary(string='WHT Base Amount', currency_field='currency_id', copy=False)
     wht_amount = fields.Monetary(string='WHT Amount', currency_field='currency_id', copy=False)
     is_advance_clearing = fields.Boolean(string='Is Advance Clearing Entry', default=False, copy=False)

@@ -185,12 +185,11 @@ class ArSettlement(models.Model):
     @api.depends(
         'amount_received', 'bank_fee',
         'line_ids.pay_amount', 'line_ids.selected',
-        'credit_line_ids.use_amount', 'credit_line_ids.selected',
+        'credit_line_ids.use_amount',
     )
     def _compute_totals(self):
         for rec in self:
-            selected_credits = rec.credit_line_ids.filtered('selected')
-            rec.credit_used = sum(selected_credits.mapped('use_amount'))
+            rec.credit_used = sum(rec.credit_line_ids.mapped('use_amount'))
             selected = rec.line_ids.filtered('selected')
             rec.allocated_amount = sum(selected.mapped('pay_amount'))
             # total_available = gross received + credit notes
@@ -418,8 +417,7 @@ class ArSettlement(models.Model):
             if not line.pay_amount:
                 line.pay_amount = line.residual
 
-        selected_credit_lines = self.credit_line_ids.filtered('selected')
-        for cl in selected_credit_lines:
+        for cl in self.credit_line_ids.filtered('selected'):
             if not cl.use_amount:
                 cl.use_amount = cl.credit_residual
 
@@ -437,7 +435,7 @@ class ArSettlement(models.Model):
 
         # Compute diff from actual allocated amounts (not the computed field
         # which may still reflect stale pay_amount=0 values)
-        credit_used = sum(selected_credit_lines.mapped('use_amount'))
+        credit_used = sum(self.credit_line_ids.filtered('selected').mapped('use_amount'))
         total_allocated = sum(inv_selected.mapped('pay_amount'))
         diff = (self.amount_received + credit_used) - total_allocated
 
@@ -482,14 +480,20 @@ class ArSettlement(models.Model):
         if self.bank_fee or (shortfall != 0 and self.difference_handling != 'partial'):
             self._adjust_payment_move(payment, shortfall)
 
-        # ── 3. Apply credit notes directly to selected invoices ───────────
-        for cl in selected_credit_lines:
-            if cl.use_amount > 0:
-                self._apply_credit_note_to_invoices(cl, inv_selected)
-
-        # ── 4. Reconcile remaining invoice residuals with payment ─────────
-        for line in inv_selected:
+        # ── 3. Reconcile invoices ──────────────────────────────────────────
+        # Sort: same-partner invoices FIRST to avoid exhausting payment AR
+        # before they can be reconciled directly (different-partner invoices
+        # create clearing entries that consume the payment AR credit).
+        inv_sorted = inv_selected.sorted(
+            lambda l: (l.invoice_id.partner_id != self.partner_id, l.invoice_id.name)
+        )
+        for line in inv_sorted:
             self._reconcile_invoice(payment, line)
+
+        # ── 4. Apply credit notes ──────────────────────────────────────────
+        for cl in self.credit_line_ids.filtered('selected'):
+            if cl.use_amount > 0:
+                self._reconcile_credit_note(payment, cl)
 
         # ── 5. Store all allocated invoices for smart button ────────────
         self.allocated_invoice_ids = [(6, 0, inv_selected.mapped('invoice_id').ids)]
@@ -545,7 +549,7 @@ class ArSettlement(models.Model):
         shortfall  = 0  →  only bank-fee line added
 
         The AR credit is always set to:
-            net (received - fee)  +  fee  +  shortfall  = cash-settled amount
+            net (received - fee)  +  fee  +  shortfall  =  total_allocated
         This ensures the entry is self-balancing regardless of sign.
 
         Resulting entry:
@@ -553,7 +557,7 @@ class ArSettlement(models.Model):
             Dr Bank Fee       [fee]            (if any)
             Dr Diff Account   [+shortfall]     (underpayment write-off)
          OR Cr Diff Account   [-shortfall]     (overpayment write-off)
-            Cr AR             [cash-settled amount]
+            Cr AR             [total_allocated]
         """
         move = payment.move_id
         move.button_draft()
@@ -638,7 +642,11 @@ class ArSettlement(models.Model):
                     vals['amount_currency'] = -amt
             new_lines.append((0, 0, vals))
 
-        # Increase AR credit so entry balances.
+        # Increase AR credit so entry balances:
+        #   AR credit = net + fee + shortfall_if_write_off
+        #             = (received - fee) + fee + shortfall
+        #             = received + shortfall
+        #             = total_allocated  ✓
         extra = (self.bank_fee or 0.0)
         if shortfall and self.difference_handling != 'partial':
             extra += shortfall  # shortfall > 0 → raises AR; shortfall < 0 → lowers AR
@@ -823,9 +831,19 @@ class ArSettlement(models.Model):
             invoice_partner.name, allocate_amount,
         )
 
-    def _apply_credit_note_to_invoices(self, credit_line, invoice_lines):
-        """Apply one selected credit note to selected invoices of the same partner."""
+    def _reconcile_credit_note(self, payment, credit_line):
+        """Apply a credit note against the settlement's selected invoices.
+
+        Strategy (mirrors batch_payment_wizard):
+          - Same partner as paying customer → reconcile CN AR directly
+            against payment AR (payment absorbs the credit).
+          - Different partner → create a clearing entry to transfer the
+            credit to the paying customer's AR, then reconcile both sides.
+
+        The credit reduces what the payment needs to cover.
+        """
         cn = credit_line.credit_move_id
+        cn_partner = cn.partner_id
         use_amount = credit_line.use_amount or abs(cn.amount_residual)
         if not use_amount:
             return
@@ -837,54 +855,85 @@ class ArSettlement(models.Model):
             and l.amount_residual != 0
         )
         if not cn_ar:
-            raise UserError(
-                _('Credit note %s has no open receivable line to apply.')
-                % cn.name
-            )
+            _logger.warning('Credit note %s has no open AR line to reconcile.', cn.name)
+            return
 
-        cn_ar = cn_ar[0]
-        remaining = min(use_amount, abs(cn_ar.amount_residual))
-        candidates = invoice_lines.filtered(
-            lambda l: l.invoice_id.partner_id == cn.partner_id
-        ).sorted(lambda l: l.invoice_date or fields.Date.min)
-
-        company_currency = self.env.company.currency_id
-        is_foreign = self.currency_id != company_currency
-
-        for line in candidates:
-            if self.currency_id.is_zero(remaining):
-                break
-            invoice_ar = line.invoice_id.line_ids.filtered(
-                lambda l: l.account_id == cn_ar.account_id
+        if cn_partner == self.partner_id:
+            # ── Same partner: reconcile CN AR ↔ payment AR ──────────────
+            payment_ar = payment.move_id.line_ids.filtered(
+                lambda l: l.account_id.account_type == 'asset_receivable'
                 and not l.reconciled
-                and l.amount_residual > 0
-            )[:1]
-            if not invoice_ar:
-                continue
-
-            amount_currency = min(remaining, abs(invoice_ar.amount_residual))
+                and l.amount_residual != 0
+            )
+            if cn_ar and payment_ar:
+                (cn_ar | payment_ar).reconcile()
+        else:
+            # ── Different partner: clearing entry ─────────────────────────
+            # Dr AR (cn_partner)       → absorbs the CN credit residual
+            # Cr AR (paying partner)   → gives paying partner the credit amount
+            receivable_account = cn_ar.account_id[:1]
+            company_currency = self.env.company.currency_id
+            is_foreign = self.currency_id != company_currency
             amount_company = (
                 self.currency_id._convert(
-                    amount_currency, company_currency,
-                    self.env.company, self.payment_date,
-                )
-                if is_foreign else amount_currency
+                    use_amount, company_currency,
+                    self.env.company, self.payment_date)
+                if is_foreign else use_amount
             )
-            self.env['account.partial.reconcile'].create({
-                'debit_move_id': invoice_ar.id,
-                'credit_move_id': cn_ar.id,
-                'amount': amount_company,
-                'debit_amount_currency': amount_currency if is_foreign else amount_company,
-                'credit_amount_currency': amount_currency if is_foreign else amount_company,
-                'company_id': self.env.company.id,
-            })
-            remaining -= amount_currency
 
-        if not self.currency_id.is_zero(remaining):
-            raise UserError(
-                _('Credit note %s could not be fully applied. Remaining: %.2f')
-                % (cn.name, remaining)
+            if is_foreign:
+                debit_vals = {
+                    'account_id': receivable_account.id,
+                    'partner_id': cn_partner.id,
+                    'debit': amount_company, 'credit': 0.0,
+                    'amount_currency': use_amount,
+                    'currency_id': self.currency_id.id,
+                }
+                credit_vals = {
+                    'account_id': receivable_account.id,
+                    'partner_id': self.partner_id.id,
+                    'debit': 0.0, 'credit': amount_company,
+                    'amount_currency': -use_amount,
+                    'currency_id': self.currency_id.id,
+                }
+            else:
+                debit_vals = {
+                    'account_id': receivable_account.id,
+                    'partner_id': cn_partner.id,
+                    'debit': amount_company, 'credit': 0.0,
+                }
+                credit_vals = {
+                    'account_id': receivable_account.id,
+                    'partner_id': self.partner_id.id,
+                    'debit': 0.0, 'credit': amount_company,
+                }
+
+            clearing_move = self.env['account.move'].create({
+                'journal_id': self.journal_id.id,
+                'date': self.payment_date,
+                'ref': _('CN Clearing: %s → %s [%s]') % (
+                    cn_partner.name, self.partner_id.name, cn.name),
+                'partner_id': self.partner_id.id,
+                'line_ids': [(0, 0, debit_vals), (0, 0, credit_vals)],
+            })
+            clearing_move.action_post()
+
+            # Reconcile CN AR ↔ clearing debit (closes the credit note)
+            clearing_dr = clearing_move.line_ids.filtered(
+                lambda l: l.partner_id == cn_partner and l.debit > 0)
+            if cn_ar and clearing_dr:
+                (cn_ar | clearing_dr).reconcile()
+
+            # Reconcile clearing credit ↔ payment AR (gives paying partner credit)
+            payment_ar = payment.move_id.line_ids.filtered(
+                lambda l: l.account_id.account_type == 'asset_receivable'
+                and not l.reconciled
+                and l.amount_residual != 0
             )
+            clearing_cr = clearing_move.line_ids.filtered(
+                lambda l: l.partner_id == self.partner_id and l.credit > 0)
+            if payment_ar and clearing_cr:
+                (payment_ar | clearing_cr).reconcile()
 
     # ═══════════════════════════════════════════════════════════════════
     #  ACTIONS – CANCEL / DRAFT

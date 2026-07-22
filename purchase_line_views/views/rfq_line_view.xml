@@ -11,9 +11,13 @@
                 <field name="product_id"/>
                 <field name="name"/>
                 <field name="date_order"/>
+                <field name="purchase_user_id" optional="hide"/>
+                <field name="purchase_company_id" optional="hide"/>
                 <field name="date_planned" optional="hide"/>
                 <field name="product_qty"/>
                 <field name="price_unit"/>
+                <field name="last_purchase_price" optional="show" widget="monetary"/>
+                <field name="last_purchase_date" optional="hide"/>
                 <field name="product_uom" optional="hide"/>
                 <field name="price_subtotal" optional="show" widget="monetary" sum="Total"/>
                 <field name="currency_id" column_invisible="True"/>
@@ -29,7 +33,11 @@
         <field name="model">purchase.order.line</field>
         <field name="arch" type="xml">
             <kanban default_group_by="partner_id">
-                <field name="partner_id" readonly="1"/>>
+                <field name="partner_id" readonly="1"/>
+                <field name="purchase_user_id"/>
+                <field name="purchase_company_id"/>
+                <field name="last_purchase_price"/>
+                <field name="last_purchase_date"/>
                 <templates>
                     <t t-name="kanban-box">
                         <div class="oe_kanban_card oe_kanban_global_click">
@@ -60,6 +68,10 @@
                                 <div>
                                     Quantity:
                                     <field name="product_qty"/>
+                                </div>
+                                <div>
+                                    Last Price:
+                                    <field name="last_purchase_price"/>
                                 </div>
                                 State:
                                 <field name="state" widget="badge"/>
@@ -118,14 +130,15 @@
         <field name="res_model">purchase.order.line</field>
         <field name="view_mode">tree,form,kanban,pivot,graph</field>
         <field name="domain">
-            [('state','=','draft')]
+            [('state', 'in', ['draft', 'sent', 'to approve'])]
         </field>
         <field name="view_ids" eval="[Command.clear(),
                     Command.create({'view_mode': 'tree', 'view_id': ref('rfq_line_tree_view')}),
                     Command.create({'view_mode': 'kanban', 'view_id': ref('rfq_line_kanban_view')}),
                     Command.create({'view_mode': 'pivot', 'view_id': ref('rfq_line_pivot_view_pivot')}),
                     Command.create({'view_mode': 'graph', 'view_id': ref('rfq_line_graph_view')}),
-                    Command.create({'view_mode': 'calendar', 'view_id': ref('rfq_line_calender_view')}),]"/>
+                    Command.create({'view_mode': 'calendar', 'view_id': ref('rfq_line_calender_view')}),
+                    Command.create({'view_mode': 'form', 'view_id': ref('purchase_order_line_form_view')}),]"/>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 RFQ Line Views

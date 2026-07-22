@@ -35,6 +35,63 @@ class PurchaseOrderLine(models.Model):
         help='For getting product image '
              'to purchase order line')
 
+    purchase_user_id = fields.Many2one(
+        related="order_id.user_id",
+        string="Buyer",
+        store=True,
+        readonly=True,
+    )
+    purchase_company_id = fields.Many2one(
+        related="order_id.company_id",
+        string="Company",
+        store=True,
+        readonly=True,
+    )
+    last_purchase_price = fields.Monetary(
+        string="Last Purchase Price",
+        currency_field="currency_id",
+        compute="_compute_last_purchase_info",
+    )
+    last_purchase_date = fields.Datetime(
+        string="Last Purchase Date",
+        compute="_compute_last_purchase_info",
+    )
+
+    @api.depends("product_id", "order_id", "order_id.date_order", "currency_id")
+    def _compute_last_purchase_info(self):
+        for line in self:
+            line.last_purchase_price = False
+            line.last_purchase_date = False
+            if not line.product_id or not line.order_id.date_order:
+                continue
+
+            previous_order = self.env["purchase.order"].search(
+                [
+                    ("order_line.product_id", "=", line.product_id.id),
+                    ("id", "!=", line.order_id.id),
+                    ("state", "in", ("purchase", "done")),
+                    ("date_order", "<", line.order_id.date_order),
+                ],
+                order="date_order desc, id desc",
+                limit=1,
+            )
+            if not previous_order:
+                continue
+
+            previous_line = previous_order.order_line.filtered(
+                lambda purchase_line: purchase_line.product_id == line.product_id
+            )[:1]
+            if not previous_line:
+                continue
+
+            line.last_purchase_price = previous_order.currency_id._convert(
+                previous_line.price_unit,
+                line.currency_id,
+                line.order_id.company_id,
+                fields.Date.to_date(previous_order.date_order),
+            )
+            line.last_purchase_date = previous_order.date_order
+
     @api.onchange('order_id')
     def onchange_order_id(self):
         """ Restrict creating purchase order line for purchase order
