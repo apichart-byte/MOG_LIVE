@@ -11,6 +11,26 @@
                            options="{'no_create': True}" 
                            groups="stock.group_stock_multi_warehouses"/>
                 </xpath>
+                <xpath expr="//page[@name='customer_signature']" position="after">
+                    <page name="signature_approved_sale_order"
+                          string="Signature Approved Sale Order"
+                          groups="buz_customize_sale.group_sale_signature_approved_page">
+                        <group string="Signatures Used BY Proforma Invoice">
+                            <field name="approver_id"
+                                   class="oe_inline"
+                                   style="width: 150px;"/>
+                            <field name="approval_date" widget="date"
+                                    class="oe_inline" 
+                                    style="width: 150px;"/>
+                            <field name="approval_signature"
+                                   widget="signature"
+                                   options="{'size': [205, 73]}"
+                                   class="oe_inline"
+                                   style="width: 205px !important; height: 73px !important; min-width: 205px; min-height: 73px;"
+                                   readonly="1"/>
+                        </group>
+                    </page>
+                </xpath>
             </field>
         </record>
 </odoo>

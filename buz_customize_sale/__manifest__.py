@@ -7,8 +7,9 @@
         This module customizes the sale order form view:
         - Moves warehouse field after quotation template
     """,
-    'depends': ['sale_stock', 'sale_management'],
+    'depends': ['sale_stock', 'sale_management', 'buz_po_portal'],
     'data': [
+        'security/security.xml',
         'views/sale_views.xml',
     ],
     'installable': True,

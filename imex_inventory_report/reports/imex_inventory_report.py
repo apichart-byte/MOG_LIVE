@@ -1,6 +1,10 @@
+from datetime import datetime, time, timedelta
 
 from odoo import api, fields, models, tools
 from odoo.tools.safe_eval import safe_eval
+
+# Thailand has no DST, so Bangkok is always a fixed UTC+7 offset.
+BANGKOK_UTC_OFFSET = timedelta(hours=7)
 
 
 class ImexInventoryReport(models.Model):
@@ -125,6 +129,16 @@ class ImexInventoryReport(models.Model):
             "imex_inventory_report.cutoff_date")
         return fields.Date.to_date(cutoff) if cutoff else fields.Date.to_date("1900-01-01")
 
+    def _bangkok_day_range_to_utc(self, day_from, day_to):
+        """Convert an inclusive Bangkok-calendar-date range [day_from, day_to]
+        into a naive-UTC datetime range [utc_lower, utc_upper) suitable for a
+        sargable comparison against move.date (stored as naive UTC), instead
+        of wrapping move.date in AT TIME ZONE/CAST in the WHERE clause."""
+        utc_lower = datetime.combine(day_from, time.min) - BANGKOK_UTC_OFFSET
+        utc_upper = datetime.combine(
+            day_to + timedelta(days=1), time.min) - BANGKOK_UTC_OFFSET
+        return utc_lower, utc_upper
+
     def init_results(self, filters):
         cutoff_date = self._get_cutoff_date()
         date_from = filters.date_from or fields.Date.to_date("1900-01-01")
@@ -132,6 +146,8 @@ class ImexInventoryReport(models.Model):
             date_from = cutoff_date
         date_to = filters.date_to or fields.Date.context_today(self)
         is_groupby_location = filters.is_groupby_location
+        utc_lower, utc_upper = self._bangkok_day_range_to_utc(
+            cutoff_date, date_to)
 
         locations, count_internal_transfer = self._get_locations(
             filters.location_id, is_groupby_location)
@@ -196,19 +212,19 @@ class ImexInventoryReport(models.Model):
                             ELSE 0 END) as product_out_amount
                     FROM(
                         SELECT
-                            move.date, move.product_id,
+                            (move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date, move.product_id,
                             template.uom_id as product_uom,
                             move.location_id as location,
                             move.location_id,
                             move.location_dest_id,
                             template.categ_id as product_category,
                             (move.quantity / uom_move.factor * uom_prod.factor) as quantity,
-                            svl.unit_cost
+                            COALESCE(svl.unit_cost, wh_fallback.wh_unit_cost, 0) as unit_cost
                         FROM stock_move move
                             LEFT JOIN (
                                 SELECT stock_move_id,
-                                       CASE WHEN SUM(quantity) != 0
-                                            THEN SUM(value) / SUM(quantity)
+                                       CASE WHEN SUM(ABS(quantity)) > 0
+                                            THEN SUM(ABS(value)) / SUM(ABS(quantity))
                                             ELSE 0 END as unit_cost
                                 FROM stock_valuation_layer
                                 WHERE quantity != 0
@@ -226,29 +242,38 @@ class ImexInventoryReport(models.Model):
                                 on move.product_uom = uom_move.id
                             LEFT JOIN uom_uom uom_prod
                                 on template.uom_id = uom_prod.id
+                            LEFT JOIN LATERAL (
+                                SELECT CASE WHEN SUM(ABS(svl2.quantity)) > 0
+                                            THEN SUM(ABS(svl2.value)) / SUM(ABS(svl2.quantity))
+                                            ELSE NULL END as wh_unit_cost
+                                FROM stock_valuation_layer svl2
+                                WHERE svl2.product_id = move.product_id
+                                    AND svl2.warehouse_id = location_src.warehouse_id
+                                    AND svl2.create_date <= move.date
+                            ) wh_fallback ON true
                         WHERE
                             move.location_id in %s
                             and move.state = 'done'
                             and move.product_id in %s
                             and template.categ_id in %s
-                            and CAST(move.date AS date) <= %s
-                            and CAST(move.date AS date) >= %s
+                            and move.date >= %s
+                            and move.date < %s
                             and location_src.usage = 'internal'
                         UNION ALL
                         SELECT
-                            move.date, move.product_id,
+                            (move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date, move.product_id,
                             template.uom_id as product_uom,
                             move.location_dest_id as location,
                             move.location_id,
                             move.location_dest_id,
                             template.categ_id as product_category,
                             (move.quantity / uom_move.factor * uom_prod.factor) as quantity,
-                            svl.unit_cost
+                            COALESCE(svl.unit_cost, wh_fallback.wh_unit_cost, 0) as unit_cost
                         FROM stock_move move
                             LEFT JOIN (
                                 SELECT stock_move_id,
-                                       CASE WHEN SUM(quantity) != 0
-                                            THEN SUM(value) / SUM(quantity)
+                                       CASE WHEN SUM(ABS(quantity)) > 0
+                                            THEN SUM(ABS(value)) / SUM(ABS(quantity))
                                             ELSE 0 END as unit_cost
                                 FROM stock_valuation_layer
                                 WHERE quantity != 0
@@ -264,13 +289,22 @@ class ImexInventoryReport(models.Model):
                                 on move.product_uom = uom_move.id
                             LEFT JOIN uom_uom uom_prod
                                 on template.uom_id = uom_prod.id
+                            LEFT JOIN LATERAL (
+                                SELECT CASE WHEN SUM(ABS(svl2.quantity)) > 0
+                                            THEN SUM(ABS(svl2.value)) / SUM(ABS(svl2.quantity))
+                                            ELSE NULL END as wh_unit_cost
+                                FROM stock_valuation_layer svl2
+                                WHERE svl2.product_id = move.product_id
+                                    AND svl2.warehouse_id = location_dest.warehouse_id
+                                    AND svl2.create_date <= move.date
+                            ) wh_fallback ON true
                         WHERE
                             move.location_dest_id in %s
                             and move.state = 'done'
                             and move.product_id in %s
                             and template.categ_id in %s
-                            and CAST(move.date AS date) <= %s
-                            and CAST(move.date AS date) >= %s
+                            and move.date >= %s
+                            and move.date < %s
                             and location_dest.usage = 'internal'
                         ) as move_group_location
                     GROUP BY 
@@ -296,13 +330,13 @@ class ImexInventoryReport(models.Model):
                       locations,
                       product_ids,
                       product_category_ids,
-                      date_to,
-                      cutoff_date,
+                      utc_lower,
+                      utc_upper,
                       locations,
                       product_ids,
                       product_category_ids,
-                      date_to,
-                      cutoff_date)
+                      utc_lower,
+                      utc_upper)
         else:
             query_ = """ 
                 SELECT *, (a.initial + a.product_in - a.product_out) as balance,
@@ -314,52 +348,52 @@ class ImexInventoryReport(models.Model):
                         null as location,
                         template.categ_id as product_category,
                         (sum(CASE WHEN
-                                CAST(move.date AS date) < %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) < %s
                                 and location_dest.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor
                             ELSE 0 END)
                         -
                         sum(CASE WHEN
-                                CAST(move.date AS date) < %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) < %s
                                 and location.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor
                             ELSE 0 END)) as initial,
                         (sum(CASE WHEN
-                                CAST(move.date AS date) < %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) < %s
                                 and location_dest.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor * svl.unit_cost
                             ELSE 0 END)
                         -
                         sum(CASE WHEN
-                                CAST(move.date AS date) < %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) < %s
                                 and location.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor * svl.unit_cost
                             ELSE 0 END)) as initial_amount,
                         sum(CASE WHEN
-                                CAST(move.date AS date) >= %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) >= %s
                                 and location_dest.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor
                             ELSE 0 END) as product_in,
                         sum(CASE WHEN
-                                CAST(move.date AS date) >= %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) >= %s
                                 and location_dest.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor * svl.unit_cost
                             ELSE 0 END) as product_in_amount,
                         sum(CASE WHEN
-                                CAST(move.date AS date) >= %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) >= %s
                                 and location.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor
                             ELSE 0 END) as product_out,
                         sum(CASE WHEN
-                                CAST(move.date AS date) >= %s
+                                CAST((move.date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok') AS date) >= %s
                                 and location.usage = 'internal'
                             THEN move.quantity / uom_move.factor * uom_prod.factor * svl.unit_cost
                             ELSE 0 END) as product_out_amount
                     FROM stock_move move
                         LEFT JOIN (
                             SELECT stock_move_id,
-                                   CASE WHEN SUM(quantity) != 0
-                                        THEN SUM(value) / SUM(quantity)
+                                   CASE WHEN SUM(ABS(quantity)) > 0
+                                        THEN SUM(ABS(value)) / SUM(ABS(quantity))
                                         ELSE 0 END as unit_cost
                             FROM stock_valuation_layer
                             WHERE quantity != 0
@@ -383,8 +417,8 @@ class ImexInventoryReport(models.Model):
                         and move.state = 'done'
                         and move.product_id in %s
                         and template.categ_id in %s
-                        and CAST(move.date AS date) <= %s
-                        and CAST(move.date AS date) >= %s
+                        and move.date >= %s
+                        and move.date < %s
                     GROUP BY
                         move.product_id,
                         template.uom_id,
@@ -405,8 +439,8 @@ class ImexInventoryReport(models.Model):
                       internal_picking_type,
                       product_ids,
                       product_category_ids,
-                      date_to,
-                      cutoff_date)
+                      utc_lower,
+                      utc_upper)
         tools.drop_view_if_exists(self._cr, self._table)
         res = self._cr.execute(
             """CREATE VIEW {} as ({})""".format(self._table, query_), params)

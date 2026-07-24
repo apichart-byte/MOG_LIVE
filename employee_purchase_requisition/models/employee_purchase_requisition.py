@@ -111,7 +111,8 @@ class PurchaseRequisition(models.Model):
         help='Destination location of requisition.')
     delivery_type_id = fields.Many2one(
         comodel_name='stock.picking.type', string='Delivery To',
-        help='Type of delivery.')
+        domain=[('code', '=', 'incoming')],
+        help='Type of delivery (inbound operations only).')
     internal_picking_id = fields.Many2one(
         comodel_name='stock.picking.type', string="Internal Picking")
 
@@ -461,27 +462,6 @@ class PurchaseRequisition(models.Model):
             'state': 'received',
             'receive_date': fields.Date.today(),
         })
-
-    def action_set_to_draft(self):
-        """Reset cancelled requisition back to draft (administrative)."""
-        for rec in self:
-            active_pos = self.env['purchase.order'].search([
-                ('requisition_order', '=', rec.name),
-                ('state', 'not in', ['cancel'])
-            ])
-            if active_pos:
-                raise ValidationError(
-                    'ไม่สามารถตั้งค่าเป็น Draft ได้ เนื่องจากยังมีใบสั่งซื้อ '
-                    '(PO) ที่เกี่ยวข้องและยังทำงานอยู่ '
-                    'กรุณายกเลิกใบสั่งซื้อทั้งหมดที่เกี่ยวข้องก่อน')
-            if hasattr(rec, '_release_monthly_analytic_budget'):
-                try:
-                    rec._release_monthly_analytic_budget()
-                except Exception:
-                    pass
-            rec.write({'state': 'draft'})
-            rec.message_post(
-                body=f'Status reset to Draft by {self.env.user.name}')
 
     # ── Smart buttons ────────────────────────────────────────────
     def get_purchase_order(self):

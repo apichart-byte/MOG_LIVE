@@ -116,15 +116,6 @@
             invisible="state != 'purchase_order_created'"
             help="Cancel PR completely if POs are cancelled"
             groups="employee_purchase_requisition.employee_requisition_head,employee_purchase_requisition.employee_requisition_manager"/>
-    
-    <!-- Set to Draft (administrative reset) -->
-    <button name="action_set_to_draft"
-            string="Set to Draft"
-            type="object"
-            invisible="state != 'cancelled'"
-            confirm="ยืนยันการตั้งสถานะเป็น Draft ใช่ไหม?"
-            help="Reset cancelled requisition back to Draft"
-            groups="employee_purchase_requisition.employee_requisition_head,employee_purchase_requisition.employee_requisition_manager"/>
 
 </header>
                 <sheet>
