@@ -1,10 +1,32 @@
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
+from datetime import timedelta
+import base64
+import io
 import logging
 
 _logger = logging.getLogger(__name__)
 
 WALK_IN_CUSTOMER_NAME = 'Walk-in Customer'
+
+
+def _resize_signature(image_b64, max_width=200, max_height=100):
+    """Resize a base64-encoded image to fit within max_width x max_height.
+    Returns resized base64 string, or original if resize fails."""
+    if not image_b64:
+        return image_b64
+    try:
+        from PIL import Image
+        image_data = base64.b64decode(image_b64)
+        img = Image.open(io.BytesIO(image_data))
+        img.thumbnail((max_width, max_height), Image.LANCZOS)
+        output = io.BytesIO()
+        img_format = img.format or 'PNG'
+        img.save(output, format=img_format)
+        return base64.b64encode(output.getvalue()).decode('utf-8')
+    except Exception as e:
+        _logger.warning("Could not resize signature image: %s", e)
+        return image_b64
 
 # ─── Trade Channel Mapping ────────────────────────────────────
 # Auto-maps POS Lite channel → marketplace_settlement.trade_channel
@@ -116,6 +138,17 @@ class PosLiteOrder(models.Model):
         tracking=True, check_company=True,
         domain="[('company_id', '=', company_id)]",
     )
+    authorized_signature = fields.Binary(
+        string='Authorized Signature',
+        compute='_compute_authorized_signature',
+    )
+
+    @api.depends('employee_id.signature_image')
+    def _compute_authorized_signature(self):
+        for order in self:
+            order.authorized_signature = _resize_signature(
+                order.employee_id.signature_image
+            ) if order.employee_id else False
     line_ids = fields.One2many('pos.lite.order.line', 'order_id', string='Order Lines')
     payment_ids = fields.One2many('pos.lite.payment', 'order_id', string='Payments')
     amount_untaxed = fields.Monetary(compute='_compute_amounts', store=True)
@@ -142,6 +175,12 @@ class PosLiteOrder(models.Model):
     invoice_id = fields.Many2one('account.move', readonly=True, copy=False)
     picking_id = fields.Many2one('stock.picking', readonly=True, copy=False)
     is_return = fields.Boolean(default=False, copy=False, tracking=True)
+    is_late_return = fields.Boolean(
+        default=False, copy=False, tracking=True,
+        help='Return (or its linked exchange) confirmed on a different calendar day '
+             'than the original sale: credit note stays unposted and the receipt '
+             'stays unvalidated for manual completion.',
+    )
     return_status = fields.Char(compute='_compute_return_exchange_status', string='Return Status')
     return_of_order_id = fields.Many2one('pos.lite.order', readonly=True, copy=False, tracking=True, index=True)
     return_order_ids = fields.One2many('pos.lite.order', 'return_of_order_id', string='Return Orders')
@@ -420,6 +459,11 @@ class PosLiteOrder(models.Model):
 
     # ─── Invoice / Picking preparation ─────────────────────────
 
+    def _get_document_date(self):
+        """Invoice/stock document date: always order date + 1 day."""
+        self.ensure_one()
+        return self.date_order.date() + timedelta(days=1)
+
     def _prepare_invoice_vals(self):
         self.ensure_one()
         partner = self._get_or_create_customer_partner()
@@ -432,19 +476,18 @@ class PosLiteOrder(models.Model):
         line_vals = []
         for line in self.line_ids:
             taxes = line.product_id.taxes_id.filtered(lambda t: t.company_id in (False, self.company_id))
-            inv_price_unit = line.price_unit
-            inv_discount = line.discount
-            if line.discount_type == 'fixed':
-                inv_price_unit = max(line.price_unit - line.discount, 0.0)
-                inv_discount = 0.0
+            inv_discount = line.discount if line.discount_type == 'percent' else 0.0
+            inv_discount_fixed = line.discount if line.discount_type == 'fixed' else 0.0
             line_vals.append(fields.Command.create({
                 'product_id': line.product_id.id,
                 'name': line.description or line.product_id.display_name,
                 'quantity': line.qty,
-                'price_unit': inv_price_unit,
+                'price_unit': line.price_unit,
                 'discount': inv_discount,
+                'discount_fixed': inv_discount_fixed,
                 'tax_ids': [fields.Command.set(taxes.ids)],
                 'product_uom_id': line.product_id.uom_id.id,
+                'analytic_distribution': self.session_id.analytic_distribution or False,
             }))
         invoice_partner = self.partner_invoice_id or partner
         vals = {
@@ -454,6 +497,7 @@ class PosLiteOrder(models.Model):
             'partner_shipping_id': (self.partner_shipping_id or invoice_partner).id,
             'invoice_origin': self.name,
             'invoice_payment_term_id': False,
+            'invoice_date': self._get_document_date(),
             'journal_id': journal.id,
             'trade_channel': self.trade_channel,
             'invoice_line_ids': line_vals,
@@ -478,11 +522,18 @@ class PosLiteOrder(models.Model):
             else self.env['pos.lite.config'].get_default_config(self.company_id)
         )
         if self.is_return:
-            picking_type = (
-                config.return_picking_type_id
-                if config and config.return_picking_type_id
-                else self.warehouse_id.in_type_id
-            )
+            if self.is_late_return:
+                picking_type = (
+                    config.late_return_picking_type_id
+                    if config and config.late_return_picking_type_id
+                    else self.warehouse_id.in_type_id
+                )
+            else:
+                picking_type = (
+                    config.return_picking_type_id
+                    if config and config.return_picking_type_id
+                    else self.warehouse_id.in_type_id
+                )
             if not picking_type:
                 raise UserError(_('No incoming picking type for warehouse %s.') % self.warehouse_id.display_name)
         else:
@@ -500,7 +551,15 @@ class PosLiteOrder(models.Model):
             raise UserError(_('No customer location found for stock delivery.'))
         # Source/destination stock location follows the per-location config when
         # set, otherwise the warehouse stock location (legacy behaviour).
-        stock_location = self.location_id or self.warehouse_id.lot_stock_id
+        # Late returns are the exception: the operation type may deliberately point
+        # to a different warehouse (e.g. an NC/quarantine warehouse for inspection
+        # before goods rejoin sellable stock), so the receiving location follows
+        # that operation type's own default destination instead of the config's
+        # stock location — otherwise Odoo flags the picking as location-mismatched.
+        if self.is_return and self.is_late_return and picking_type.default_location_dest_id:
+            stock_location = picking_type.default_location_dest_id
+        else:
+            stock_location = self.location_id or self.warehouse_id.lot_stock_id
         moves = []
         for line in self.line_ids.filtered(lambda l: l.product_id.type != 'service' and l.qty > 0):
             location_id = customer_location.id if self.is_return else stock_location.id
@@ -520,6 +579,7 @@ class PosLiteOrder(models.Model):
             'company_id': self.company_id.id,
             'location_id': customer_location.id if self.is_return else stock_location.id,
             'location_dest_id': stock_location.id if self.is_return else customer_location.id,
+            'scheduled_date': self._get_document_date(),
             'move_ids_without_package': moves,
         }
 
@@ -555,6 +615,12 @@ class PosLiteOrder(models.Model):
         elif isinstance(result, dict) and result.get('res_model') == 'stock.backorder.confirmation':
             wizard = self.env['stock.backorder.confirmation'].with_context(result.get('context', {})).create({})
             wizard.process_cancel_backorder()
+        # Stock is validated now, but the transaction/valuation date must reflect
+        # order date + 1 day, not "now" — backdate picking + moves post-validation.
+        doc_date = fields.Datetime.to_datetime(self._get_document_date())
+        picking.write({'date_done': doc_date})
+        picking.move_ids.write({'date': doc_date})
+        picking.move_ids.move_line_ids.write({'date': doc_date})
 
     # ─── Actions: Flow ──────────────────────────────────────────
 
@@ -629,7 +695,8 @@ class PosLiteOrder(models.Model):
         # Create invoice
         if not self.invoice_id:
             invoice = self.env['account.move'].sudo().create(order_su._prepare_invoice_vals())
-            invoice.action_post()
+            if not self.is_late_return:
+                invoice.action_post()
             self.invoice_id = invoice.id
         # Create picking
         if not self.picking_id:
@@ -637,7 +704,17 @@ class PosLiteOrder(models.Model):
             if picking_vals.get('move_ids_without_package'):
                 picking = self.env['stock.picking'].sudo().create(picking_vals)
                 self.picking_id = picking.id
-                order_su._process_stock_picking(picking)
+                if self.is_late_return:
+                    # Late return/exchange: reserve stock but leave the transfer open
+                    # for manual completion — no auto-validate, no lot/backorder wizards.
+                    picking.action_confirm()
+                    picking.action_assign()
+                else:
+                    order_su._process_stock_picking(picking)
+        if self.is_late_return:
+            # Credit note stays unposted, picking stays unvalidated — order stays
+            # 'draft' so staff can review and finish both documents manually.
+            return
         # Invoice is posted only — no account.payment creation, no reconciliation.
         # pos.lite.payment rows stay as internal records; accounting settles separately.
         self.state = 'paid'

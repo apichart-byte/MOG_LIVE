@@ -1,5 +1,9 @@
+import re
+
 from odoo import api, fields, models
 from odoo.exceptions import ValidationError
+
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 class ResPartner(models.Model):
@@ -17,9 +21,15 @@ class ResPartner(models.Model):
         if not name:
             raise ValidationError('กรุณากรอกชื่อลูกค้า')
 
+        company_type = data.get('company_type') if data.get('company_type') in ('person', 'company') else 'company'
+
         vat = (data.get('vat') or '').strip()
         if vat and not (vat.isdigit() and len(vat) == 13):
             raise ValidationError('เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก')
+
+        email = (data.get('email') or '').strip()
+        if email and not _EMAIL_RE.match(email):
+            raise ValidationError('อีเมลไม่ถูกต้อง')
 
         branch = (data.get('branch') or '').strip()
         has_branch_field = 'branch' in self._fields  # from l10n_th_partner
@@ -36,13 +46,23 @@ class ResPartner(models.Model):
                 raise ValidationError(
                     'เลขภาษีนี้มีลูกค้าอยู่แล้ว: %s' % dup.display_name)
 
+        try:
+            state_id = int(data['state_id']) if data.get('state_id') else False
+        except (ValueError, TypeError):
+            state_id = False
+
         vals = {
             'name': name,
+            'company_type': company_type,
             'vat': vat or False,
+            'email': email or False,
             'phone': (data.get('phone') or '').strip() or False,
             'street': (data.get('street') or '').strip() or False,
+            'street2': (data.get('street2') or '').strip() or False,
             'city': (data.get('city') or '').strip() or False,
+            'state_id': state_id,
             'zip': (data.get('zip') or '').strip() or False,
+            'country_id': self.env.ref('base.th').id,
             'customer_rank': 1,
             'company_id': company_id,
         }

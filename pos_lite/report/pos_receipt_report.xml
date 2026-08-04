@@ -190,6 +190,7 @@
                          <div class="row mb-2">
                             <div class="col-12 text-center">
                                 <h2 style="margin: 0; padding: 0; font-weight: bold; font-size: 25px; margin-top: 10px;">ใบเสร็จรับเงิน/ใบกำกับภาษี/ใบส่งของ</h2>
+ <p style="margin: 0; padding: 0; font-size: 18px; font-weight: bold;">***ไม่ใช่ใบกำกับภาษีฉบับจริงสำหรับการทางภาษี***</p>
                                 <p style="margin: 0; padding: 0; font-size: 18px; font-weight: bold;">Receipt/Tax Invoice/Dispatch</p>
                             </div> 
                         </div> 
@@ -451,11 +452,15 @@
                                              <br/>
                                              บริษัท โมเก้น จำกัด
                                              <br/>
-                                             ___________________________
-                                             <br/> 
-                                             ผู้มีอำนาจลงนาม
-                                             <br/>
-                                             AUTHORIZED
+                                             <t t-set="pos_sig" t-value="pos_signature_map.get(doc.id, False)"/>
+                                             <t t-if="pos_sig">
+                                                 <img t-att-src="image_data_uri(pos_sig)" style="height: 40px; max-width: 140px; display: block; margin: 0 auto;"/>
+                                             </t>
+                                             <div style="margin-top: -15px;">
+                                                 ผู้มีอำนาจลงนาม
+                                                 <br/>
+                                                 AUTHORIZED
+                                             </div>
                                          </div>
                                      </div>
 

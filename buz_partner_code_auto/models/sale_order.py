@@ -1,38 +1,38 @@
-from odoo import models, fields, api
+from odoo import models, fields, api, _
 
 class SaleOrder(models.Model):
     _inherit = 'sale.order'
 
     partner_code = fields.Char(
         string='Partner Code',
-        compute='_compute_partner_code',
-        inverse='_inverse_partner_code',
-        store=True,
-        readonly=False,
+        help='Enter partner code to auto-fill customer details',
+        store=True
     )
-
-    @api.depends('partner_id.partner_code')
-    def _compute_partner_code(self):
-        for record in self:
-            record.partner_code = record.partner_id.partner_code or False
-
-    def _inverse_partner_code(self):
-        pass  # Allow manual input via onchange below
 
     @api.onchange('partner_code')
     def _onchange_partner_code(self):
         if self.partner_code:
+            # Convert to uppercase for case-insensitive search
             partner_code = self.partner_code.strip().upper()
-            partner = self.env['res.partner'].search([
+            domain = [
                 ('partner_code', '=ilike', partner_code),
-                ('customer_rank', '>', 0)
-            ], limit=1)
+                ('customer_rank', '>', 0),
+            ]
+            if self.company_id:
+                domain += ['|', ('company_id', '=', False), ('company_id', '=', self.company_id.id)]
+            partner = self.env['res.partner'].search(domain, limit=1)
             if partner:
                 self.partner_id = partner.id
+                return {}
             else:
                 return {
                     'warning': {
-                        'title': 'Warning',
-                        'message': 'No customer found with this partner code.'
+                        'title': _('Warning'),
+                        'message': _('No customer found with this partner code.')
                     }
                 }
+
+    @api.onchange('partner_id')
+    def _onchange_partner_id_code(self):
+        if self.partner_id and hasattr(self.partner_id, 'partner_code') and self.partner_id.partner_code:
+            self.partner_code = self.partner_id.partner_code

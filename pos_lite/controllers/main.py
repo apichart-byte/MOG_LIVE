@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from datetime import timedelta
+
 from odoo import http, fields
 from odoo.http import request
 from odoo.exceptions import UserError, ValidationError, MissingError, AccessError
@@ -122,6 +124,7 @@ class PosLiteController(http.Controller):
             session_id = session.id or False
         response = request.render('pos_lite.pos_lite_terminal', {
             'session_id': session_id,
+            'is_manager': request.env.user.has_group('pos_lite.group_pos_lite_manager'),
         })
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         response.headers['Pragma'] = 'no-cache'
@@ -195,6 +198,20 @@ class PosLiteController(http.Controller):
         except _HANDLED_EXCEPTIONS as e:
             return {'success': False, 'error': str(e)}
 
+    # ─── States (Thailand only) ────────────────────────────────
+
+    @http.route('/pos_lite/api/states', type='json', auth='user', methods=['POST'], csrf=False)
+    def get_states(self, **kwargs):
+        try:
+            states = request.env['res.country.state'].search_read(
+                [('country_id.code', '=', 'TH')],
+                ['name'],
+                order='name',
+            )
+            return {'success': True, 'states': states}
+        except _HANDLED_EXCEPTIONS as e:
+            return {'success': False, 'error': str(e)}
+
     # ─── Products ───────────────────────────────────────────────
 
     @http.route('/pos_lite/api/products', type='json', auth='user', methods=['POST'], csrf=False)
@@ -248,14 +265,39 @@ class PosLiteController(http.Controller):
                     # on-hand minus reserved, never negative. Reserved stock is
                     # promised to delivery orders and must not be sellable here.
                     qty = max((q['quantity'] or 0.0) - (q['reserved_quantity'] or 0.0), 0.0)
-                    product_ids_in_stock.append(pid)
                     qty_map[pid] = qty
+                    # Only sellable if there's free stock to sell — zero (or
+                    # fully-reserved) stockable products are hidden from the
+                    # terminal entirely, not just greyed out.
+                    if qty > 0:
+                        product_ids_in_stock.append(pid)
 
             products = request.env['product.product'].search_read(
                 _terminal_product_domain(product_ids_in_stock),
                 ['name', 'type', 'list_price', 'default_code', 'categ_id', 'barcode',
-                 'taxes_id', 'image_128', 'image_256']
+                 'taxes_id']
             )
+            # Sort best-sellers first: rank by qty sold (sale.order.line,
+            # confirmed orders) in the last 90 days, company-wide. Sort is
+            # stable, so non-sellers keep their prior relative order after
+            # the best-sellers.
+            cutoff = fields.Datetime.now() - timedelta(days=90)
+            sales_data = request.env['sale.order.line'].sudo().read_group(
+                domain=[
+                    ('product_id', 'in', [p['id'] for p in products]),
+                    ('order_id.state', 'in', ['sale', 'done']),
+                    ('order_id.date_order', '>=', cutoff),
+                    ('order_id.company_id', '=', request.env.company.id),
+                ],
+                fields=['product_id', 'product_uom_qty:sum'],
+                groupby=['product_id'],
+                lazy=False,
+            )
+            sales_qty_map = {
+                s['product_id'][0]: s['product_uom_qty']
+                for s in sales_data
+            }
+            products.sort(key=lambda p: sales_qty_map.get(p['id'], 0.0), reverse=True)
             # Pre-fetch tax rates for all products
             tax_ids_set = set()
             for p in products:
@@ -272,10 +314,11 @@ class PosLiteController(http.Controller):
                 for tid in (p.get('taxes_id') or []):
                     tax_rate += tax_rate_map.get(tid, 0.0)
                 p['tax_rate'] = tax_rate
-                if p.get('image_128'):
-                    p['image_128'] = p['image_128'].decode() if isinstance(p['image_128'], bytes) else p['image_128']
-                if p.get('image_256'):
-                    p['image_256'] = p['image_256'].decode() if isinstance(p['image_256'], bytes) else p['image_256']
+                # Serve images by URL (browser fetches/caches in parallel)
+                # instead of embedding base64 bytes in the JSON payload —
+                # keeps the response small for large catalogs.
+                p['image_128'] = '/web/image/product.product/%d/image_128' % p['id']
+                p['image_256'] = '/web/image/product.product/%d/image_256' % p['id']
 
             return {'success': True, 'products': products}
         except _HANDLED_EXCEPTIONS as e:
@@ -365,7 +408,8 @@ class PosLiteController(http.Controller):
             cid = self._get_company_id()
             partner = request.env['res.partner'].sudo().pos_lite_create_customer(data, cid)
             address = ' '.join(filter(None, [
-                partner.street, partner.city, partner.zip]))
+                partner.street, partner.street2, partner.city,
+                partner.state_id.name, partner.zip]))
             return {
                 'success': True,
                 'partner': {
@@ -402,7 +446,8 @@ class PosLiteController(http.Controller):
             ], limit=10, order='name')
             customers = []
             for p in partners:
-                address = ' '.join(filter(None, [p.street, p.city, p.zip]))
+                address = ' '.join(filter(None, [
+                    p.street, p.street2, p.city, p.state_id.name, p.zip]))
                 customers.append({
                     'id': p.id,
                     'name': p.name,

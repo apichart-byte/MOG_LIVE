@@ -1,6 +1,6 @@
 {
     'name': 'POS Lite',
-    'version': '17.0.3.11.0',
+    'version': '17.0.3.18.0',
     'category': 'Sales',
     'summary': 'Lightweight form-based order entry for phone, LINE, and walk-in orders',
     'description': """
@@ -19,7 +19,7 @@ Features:
 - Sales analytics (pivot, graph)
 - Multi-company support
 - Sales margin from Standard Cost Pricelist (matches SO)
-- Per-location configuration (one config per stock.location)
+- Per-location configuration (multiple configs/sessions may share a location)
     """,
     'author': 'AI-DEV-Module-Odoo17',
     'website': 'https://github.com/apcball/AI-DEV-Module-Odoo17',
@@ -31,11 +31,15 @@ Features:
         'product',
         'stock',
         'account',
+        'analytic',
         'sale_management',
         'hr',
+        'buz_po_portal',
         'buz_custom_invoice',
+        'account_invoice_fixed_discount',
         'buz_sale_pricelist_standard_cost',
         'marketplace_settlement',
+        'sale_retention_receivable',
     ],
     'data': [
         'security/security.xml',

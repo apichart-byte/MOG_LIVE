@@ -23,8 +23,8 @@ class PosLiteConfig(models.Model):
         check_company=True,
         help='Location driven by this configuration: the POS Lite terminal reads '
              'product stock from here, and pickings source/return to this location. '
-             'One config per (company, location). Leave empty only for legacy '
-             'records — new/edited configs must set a location.',
+             'Multiple configurations may share the same location. Leave empty only '
+             'for legacy records — new/edited configs must set a location.',
     )
     pricelist_id = fields.Many2one(
         'product.pricelist',
@@ -56,16 +56,32 @@ class PosLiteConfig(models.Model):
     )
     out_picking_type_id = fields.Many2one(
         'stock.picking.type', string='Delivery Operation Type',
-        domain="[('code', '=', 'outgoing'), ('company_id', '=', company_id)]",
+        domain="[('code', '=', 'outgoing'), ('company_id', '=', company_id), "
+               "('warehouse_id', '=', warehouse_id)]",
         check_company=True,
-        help='Stock operation type used for POS delivery orders. '
-             'Leave empty to use the default outgoing type from the warehouse.',
+        help='Stock operation type used for POS delivery orders. Must belong to this '
+             'config\'s warehouse. Leave empty to use the default outgoing type from '
+             'the warehouse.',
     )
     return_picking_type_id = fields.Many2one(
         'stock.picking.type', string='Return Operation Type',
+        domain="[('code', '=', 'incoming'), ('company_id', '=', company_id), "
+               "('warehouse_id', '=', warehouse_id)]",
+        check_company=True,
+        help='Stock operation type used for POS return orders. Must belong to this '
+             'config\'s warehouse. Leave empty to use the default incoming type from '
+             'the warehouse.',
+    )
+    late_return_picking_type_id = fields.Many2one(
+        'stock.picking.type', string='Late Return Receipt Operation Type',
         domain="[('code', '=', 'incoming'), ('company_id', '=', company_id)]",
         check_company=True,
-        help='Stock operation type used for POS return orders. '
+        help='Stock operation type used when a return is processed more than one day '
+             'after the sale: goods are received as a plain receipt from the customer '
+             'instead of a same-day return, and left unvalidated for manual completion. '
+             'May belong to a different warehouse than this config (e.g. a dedicated '
+             'quarantine/inspection warehouse) — the receiving location follows this '
+             'operation type\'s own default destination, not the config\'s stock location. '
              'Leave empty to use the default incoming type from the warehouse.',
     )
     default_trade_channel = fields.Selection(
@@ -128,32 +144,5 @@ class PosLiteConfig(models.Model):
             if not config.location_id:
                 raise ValidationError(_(
                     'POS Lite Configuration "%(name)s" must specify a Product Stock '
-                    'Location. Each location requires its own configuration.'
+                    'Location.'
                 ) % {'name': config.name or config.display_name})
-
-    @api.constrains('company_id', 'location_id')
-    def _check_location_unique(self):
-        """At most one config per (company, location).
-
-        Enforced in Python (rather than via `_sql_constraints`) so the failure
-        surfaces as a clean, translated ValidationError instead of a raw
-        psycopg2 UniqueViolation. Runs after the INSERT but before commit, so
-        the duplicate create still rolls back.
-        """
-        for config in self:
-            if not config.location_id:
-                continue
-            duplicate = self.sudo().search([
-                ('id', '!=', config.id),
-                ('company_id', '=', config.company_id.id),
-                ('location_id', '=', config.location_id.id),
-            ], limit=1)
-            if duplicate:
-                raise ValidationError(_(
-                    'A POS Lite Configuration already exists for location '
-                    '"%(location)s" in company %(company)s. '
-                    'Each location may have only one configuration.'
-                ) % {
-                    'location': config.location_id.display_name,
-                    'company': config.company_id.display_name,
-                })
