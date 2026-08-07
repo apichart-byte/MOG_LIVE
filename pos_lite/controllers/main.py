@@ -44,56 +44,58 @@ def _get_terminal_location(config):
     return False
 
 
-def _add_kit_products_in_stock(env, location_id, product_ids_in_stock, qty_map):
+def _resolve_terminal_location(env, cid, session_id=False, warehouse_id=False):
+    """Resolve the single stock location a terminal call should read/sum
+    stock from, given the same session/warehouse-id contract used by
+    /api/products. Shared so every stock-reporting endpoint (grid, search,
+    ...) agrees on "here" instead of drifting into a company-wide sum.
+    """
+    warehouse = False
+    config = False
+
+    # When a session is provided, the location is locked to the session's
+    # config — ignore any client-supplied warehouse_id (per-location
+    # terminal contract). The warehouse_id param is honoured only for
+    # legacy callers that hit the endpoint without a session.
+    if session_id:
+        session = env['pos.lite.session'].sudo().browse(int(session_id))
+        if session.exists() and session.company_id.id in env.companies.ids:
+            config = session.config_id
+            if session.config_id.warehouse_id:
+                warehouse = session.config_id.warehouse_id
+    elif warehouse_id:
+        warehouse = env['stock.warehouse'].sudo().search([
+            ('id', '=', int(warehouse_id)),
+            ('company_id', '=', cid),
+        ], limit=1)
+    if not warehouse:
+        config = env['pos.lite.config'].get_default_config()
+        if config and config.warehouse_id:
+            warehouse = config.warehouse_id
+    if not warehouse:
+        warehouse = env['stock.warehouse'].search([
+            ('company_id', '=', cid),
+        ], limit=1)
+
+    return _get_terminal_location(config) if config else (warehouse.lot_stock_id if warehouse else False)
+
+
+def _add_kit_products_in_stock(env, location_id, product_ids_in_stock, qty_map, own_quant_product_ids):
     """Append BOM-kit products buildable at location_id to product_ids_in_stock.
 
-    Mirrors buz_stock_current_report's bom_available_by_location logic
-    (models/stock_current_report.py): a kit is available at a location only
-    if every one of its BOM components has free stock there, and the
-    buildable qty is the minimum (component free qty // required qty) across
-    all components. Kits that already have their own stock.quant (already in
-    product_ids_in_stock) are skipped — physical stock wins.
+    Products that already carry their own stock.quant at this location are
+    skipped — physical stock wins — even if that quant is fully reserved
+    (free qty 0). Excluding only qty>0 products would let a manufactured,
+    already-stocked product that's sold out/reserved fall through to the
+    BOM buildable-qty formula and show phantom availability computed from
+    raw-component stock instead of its own (zero) free quant. Delegates the
+    actual computation to product.product so the normal POS order form can
+    reuse the same logic (see models/product_product.py::_kit_stock_map).
     """
-    env.cr.execute("""
-        WITH kit_requirement AS (
-            SELECT pp.id AS kit_product_id,
-                   bl.product_id AS component_id,
-                   SUM(bl.product_qty) AS component_qty
-            FROM mrp_bom bom
-            JOIN product_product pp ON pp.product_tmpl_id = bom.product_tmpl_id
-                AND (bom.product_id IS NULL OR bom.product_id = pp.id)
-            JOIN product_template pt ON pt.id = pp.product_tmpl_id
-            JOIN mrp_bom_line bl ON bl.bom_id = bom.id
-            WHERE bom.active = true
-              AND bom.type IN ('normal', 'phantom')
-              AND pp.active = true AND pt.active = true
-              AND NOT (pp.id = ANY(%(excluded_ids)s))
-            GROUP BY pp.id, bl.product_id
-        ),
-        kit_requirement_size AS (
-            SELECT kit_product_id, COUNT(*) AS n_lines
-            FROM kit_requirement
-            GROUP BY kit_product_id
-        ),
-        component_stock AS (
-            SELECT product_id,
-                   GREATEST(COALESCE(SUM(quantity), 0) - COALESCE(SUM(reserved_quantity), 0), 0) AS qty
-            FROM stock_quant
-            WHERE location_id = %(location_id)s
-            GROUP BY product_id
-        )
-        SELECT kr.kit_product_id AS product_id,
-               MIN(FLOOR(cs.qty / NULLIF(kr.component_qty, 0))) AS bom_qty
-        FROM kit_requirement kr
-        JOIN kit_requirement_size krs ON krs.kit_product_id = kr.kit_product_id
-        JOIN component_stock cs ON cs.product_id = kr.component_id AND cs.qty > 0
-        GROUP BY kr.kit_product_id, krs.n_lines
-        HAVING COUNT(*) = krs.n_lines
-           AND MIN(FLOOR(cs.qty / NULLIF(kr.component_qty, 0))) > 0
-    """, {'location_id': location_id, 'excluded_ids': product_ids_in_stock})
-    for row in env.cr.dictfetchall():
-        product_ids_in_stock.append(row['product_id'])
-        qty_map[row['product_id']] = float(row['bom_qty'])
+    kit_qty_map = env['product.product']._pos_lite_kit_stock_map(location_id, own_quant_product_ids)
+    for product_id, qty in kit_qty_map.items():
+        product_ids_in_stock.append(product_id)
+        qty_map[product_id] = qty
 
 
 def _sanitize_o2m_payload(raw, allowed_fields):
@@ -272,35 +274,9 @@ class PosLiteController(http.Controller):
             data = self._get_json_data()
             session_id = data.get('session_id')
             warehouse_id = data.get('warehouse_id')
-            warehouse = False
-            config = False
             cid = self._get_company_id()
 
-            # When a session is provided, the location is locked to the session's
-            # config — ignore any client-supplied warehouse_id (per-location
-            # terminal contract). The warehouse_id param is honoured only for
-            # legacy callers that hit the endpoint without a session.
-            if session_id:
-                session = request.env['pos.lite.session'].sudo().browse(int(session_id))
-                if session.exists() and session.company_id.id in request.env.companies.ids:
-                    config = session.config_id
-                    if session.config_id.warehouse_id:
-                        warehouse = session.config_id.warehouse_id
-            elif warehouse_id:
-                warehouse = request.env['stock.warehouse'].sudo().search([
-                    ('id', '=', int(warehouse_id)),
-                    ('company_id', '=', cid),
-                ], limit=1)
-            if not warehouse:
-                config = request.env['pos.lite.config'].get_default_config()
-                if config and config.warehouse_id:
-                    warehouse = config.warehouse_id
-            if not warehouse:
-                warehouse = request.env['stock.warehouse'].search([
-                    ('company_id', '=', cid),
-                ], limit=1)
-
-            location = _get_terminal_location(config) if config else (warehouse.lot_stock_id if warehouse else False)
+            location = _resolve_terminal_location(request.env, cid, session_id, warehouse_id)
 
             product_ids_in_stock = []
             qty_map = {}
@@ -328,8 +304,14 @@ class PosLiteController(http.Controller):
                 # as one code) carry no stock.quant of their own — availability
                 # is derived from their components. Same buildable-qty formula
                 # as buz_stock_current_report's bom_available_by_location CTE,
-                # scoped to this single terminal location.
-                _add_kit_products_in_stock(request.env, location.id, product_ids_in_stock, qty_map)
+                # scoped to this single terminal location. Excludes every
+                # product with its own quant row (qty_map.keys()), not just
+                # the qty>0 subset — a fully-reserved but physically-stocked
+                # product must not fall back to BOM-buildable qty.
+                _add_kit_products_in_stock(
+                    request.env, location.id, product_ids_in_stock, qty_map,
+                    list(qty_map.keys()),
+                )
 
             products = request.env['product.product'].search_read(
                 _terminal_product_domain(product_ids_in_stock),
@@ -708,6 +690,9 @@ class PosLiteController(http.Controller):
         try:
             data = self._get_json_data()
             term = data.get('term', '')
+            cid = self._get_company_id()
+            session_id = data.get('session_id')
+            warehouse_id = data.get('warehouse_id')
             products = request.env['product.product'].sudo().search([
                 '|', '|',
                 ('name', 'ilike', term),
@@ -715,17 +700,22 @@ class PosLiteController(http.Controller):
                 ('barcode', 'ilike', term),
                 ('sale_ok', '=', True),
                 ('can_be_pos', '=', True),
-                '|', ('company_id', '=', False), ('company_id', '=', self._get_company_id()),
+                '|', ('company_id', '=', False), ('company_id', '=', cid),
             ], limit=20)
             # Batch qty_available via read_group on stock.quant instead of
             # touching p.qty_available per product (N+1 on big catalogs).
-            # Reports Free to Use (on-hand minus reserved), same definition
-            # as buz_stock_current_report.
+            # Reports Free to Use (on-hand minus reserved) scoped to the
+            # terminal's own location — same location /api/products and the
+            # order line's _compute_qty_available use. Previously this summed
+            # every internal location company-wide, so a product reserved out
+            # at the terminal's warehouse could still show as sellable because
+            # another, unrelated warehouse had free stock.
             qty_map = {}
-            if products:
+            location = _resolve_terminal_location(request.env, cid, session_id, warehouse_id)
+            if products and location:
                 quants = request.env['stock.quant'].read_group(
                     domain=[('product_id', 'in', products.ids),
-                            ('location_id.usage', '=', 'internal')],
+                            ('location_id', '=', location.id)],
                     fields=['product_id', 'quantity:sum', 'reserved_quantity:sum'],
                     groupby=['product_id'],
                     lazy=False,

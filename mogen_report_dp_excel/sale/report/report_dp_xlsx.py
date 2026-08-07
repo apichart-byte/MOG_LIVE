@@ -153,6 +153,12 @@ class ReportDPExcel(models.AbstractModel):
         sr_picking_ids = data.get("service_receipt_picking_ids", [])
         if sr_picking_ids:
             pickings = self.env["stock.picking"].browse(sr_picking_ids)
+            pos_lite_orders = self.env["pos.lite.order"].search(
+                [("name", "in", pickings.mapped("origin"))]
+            )
+            pos_lite_saleperson_by_origin = {
+                order.name: order.employee_id.name for order in pos_lite_orders
+            }
             date_from = data.get("date_from")
             date_to = data.get("date_to")
             do_status = data.get("do_status")
@@ -187,7 +193,9 @@ class ReportDPExcel(models.AbstractModel):
                         "invoice_no": "",
                         "do_no": self._safe_text(picking.name),
                         "customer": self._safe_text(picking.partner_id.name),
-                        "saleperson": "",
+                        "saleperson": self._safe_text(
+                            pos_lite_saleperson_by_origin.get(picking.origin)
+                        ),
                         "sale_team": "",
                         "so_ref": "",
                         "shipping_address": self._safe_text(picking.partner_id.contact_address),
