@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Not noupdate: the record no longer writes `users`, so an upgrade has
+         nothing to reset, and the rename below has to be able to land. -->
+    <data>
+
+        <!--
+            "Stock Valuation Repair" used to gate the Recalculate Valuation
+            wizard that lived in this module. That wizard is gone: its work
+            moved into fifo.recalculation.wizard in stock_fifo_by_warehouse_recal,
+            which does the same repairs behind a preview, a mandatory backup and
+            a rollback, and is gated on its own "FIFO Repair" group.
+
+            The record is kept here only so the upgrade does not silently delete
+            a group that other data may still reference. It grants nothing.
+        -->
+        <record id="group_stock_valuation_repair" model="res.groups">
+            <field name="name">Stock Valuation Repair (obsolete)</field>
+            <field name="category_id" ref="base.module_category_hidden"/>
+        </record>
+
+    </data>
+</odoo>

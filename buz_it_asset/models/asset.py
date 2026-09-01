@@ -151,7 +151,12 @@ class ITAsset(models.Model):
 
     name = fields.Char(required=True, tracking=True)
     asset_tag = fields.Char(
+        string='รหัสทรัพย์สิน (Asset IT Code)',
         required=True, readonly=True, copy=False, default='New', tracking=True,
+    )
+    asset_acc_code = fields.Char(
+        string='รหัสทรัพย์สินบัญชี (Asset Acc Code)',
+        tracking=True,
     )
     legacy_asset_tag = fields.Char(
         string='Legacy Asset Tag', readonly=True, copy=False, index=True,
@@ -243,6 +248,7 @@ class ITAsset(models.Model):
         ('lost', 'Lost'),
     ], default='available', required=True, tracking=True)
     active = fields.Boolean(default=True)
+    image_1920 = fields.Image(string="รูปโปรไฟล์ (Profile Image)", max_width=1024, max_height=1024)
     notes = fields.Text()
 
     _sql_constraints = [
@@ -284,8 +290,6 @@ class ITAsset(models.Model):
                 vals.pop(field_name, None)
             if not vals.get('type_id'):
                 raise ValidationError(_('Select a hardware type.'))
-            if not vals.get('serial_number'):
-                raise ValidationError(_('Enter a serial number for the asset.'))
             company = self.env['res.company'].browse(
                 vals.get('company_id') or self.env.company.id,
             ).exists()
@@ -308,8 +312,6 @@ class ITAsset(models.Model):
             vals.pop(field_name, None)
         if 'type_id' in vals and not vals['type_id']:
             raise ValidationError(_('Select a hardware type.'))
-        if 'serial_number' in vals and not vals['serial_number']:
-            raise ValidationError(_('Enter a serial number for the asset.'))
         return super().write(vals)
 
     def action_assign(self, employee_id=None, department_id=None):

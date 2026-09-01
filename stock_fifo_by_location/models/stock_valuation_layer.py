@@ -40,6 +40,18 @@ class StockValuationLayer(models.Model):
         help='Original receipt/cost layer that this warehouse position comes from.',
     )
 
+    accounting_date = fields.Datetime(
+        string='Accounting Date',
+        index=True,
+        help='Date this layer belongs to for accounting and reporting. Seeded '
+             'from the landed cost date or the stock move date at creation, and '
+             'rewritten by the backdate wizards.\n\n'
+             'This exists because create_date must NOT be touched: it is the key '
+             '_run_fifo() orders its candidate queue by, so rewriting it '
+             'reorders the FIFO queue after the fact. accounting_date carries '
+             'the period a layer belongs to without disturbing that order.',
+    )
+
     def _compute_warehouse_id(self):
         """
         Override Odoo core's compute method.
@@ -317,9 +329,26 @@ class StockValuationLayer(models.Model):
                 f"move_id={vals.get('stock_move_id')}, product_id={vals.get('product_id')}"
             )
         
+        # Seed the accounting date from the document the layer belongs to.
+        # A landed cost carries its own date; everything else follows the move.
+        # Falls back to create_date in the migration/read path when neither is set.
+        if not vals.get('accounting_date'):
+            if vals.get('stock_landed_cost_id'):
+                lc_date = self.env['stock.landed.cost'].browse(
+                    vals['stock_landed_cost_id']).date
+                if lc_date:
+                    vals['accounting_date'] = fields.Datetime.to_datetime(lc_date)
+            elif vals.get('stock_move_id'):
+                move_date = self.env['stock.move'].browse(vals['stock_move_id']).date
+                if move_date:
+                    vals['accounting_date'] = move_date
+
         # 🔴 CRITICAL: Call super with warehouse_id already in vals
         # This ensures warehouse_id is set before _run_fifo() is called
         layer = super().create(vals)
+
+        if not layer.accounting_date:
+            layer.accounting_date = layer.create_date
         
         # 🔴 VERIFY: Log the actual warehouse_id after creation
         if layer.warehouse_id:
@@ -401,7 +430,116 @@ class StockValuationLayer(models.Model):
         
         layers = self._get_fifo_queue(product_id, warehouse_id, company_id)
         return sum(layer.remaining_qty for layer in layers)
-    
+
+    # ------------------------------------------------------------------
+    # Shared FIFO replay engine
+    # ------------------------------------------------------------------
+    # The repair tool needs to know what the FIFO queue *should* be holding.
+    # That is fifo.recalculation.wizard in stock_fifo_by_warehouse_recal, which
+    # absorbed the Recalculate Valuation wizard that used to live here. The
+    # replay stays on the model so the engine has one definition regardless of
+    # who asks. Read-only: it computes, it never writes.
+
+    # Quantity below which a layer counts as exhausted. Matches _run_fifo().
+    FIFO_QTY_EPSILON = 1e-4
+
+    @api.model
+    def _fifo_replay_remaining(self, product_id, warehouse_id, company_id=None):
+        """Replay the FIFO engine for one product at one warehouse.
+
+        Mirrors _run_fifo(): candidates are consumed in (create_date, id) order
+        within the warehouse, and each consumption is priced at the candidate's
+        *live* remaining rate, remaining_value / remaining_qty. That rate is
+        what carries landed cost into COGS, so the replay has to carry it too.
+
+        Landed-cost layers hold quantity = 0 and point at the layer whose
+        remaining_value they topped up through stock_valuation_layer_id. They
+        are replayed at their own create_date rather than folded into the
+        opening seed: most of them land more than a day after the layer they
+        adjust, by which time part of that layer may already be consumed.
+        Seeding them upfront would credit stock that no longer existed.
+
+        Returns a dict:
+            'expected'   {layer_id: (remaining_qty, remaining_value)}
+            'cogs'       {layer_id: value the outgoing layer should carry}
+                         reporting only — see the wizards, which never write it
+            'shortage'   quantity consumed with nothing left to consume it from
+            'inverted'   number of layers whose id order disagrees with
+                         create_date order, i.e. the queue was reordered after
+                         the fact (backdating) and this replay cannot know what
+                         _run_fifo consumed at the time
+        """
+        company_id = company_id or self.env.company.id
+        wh_id = warehouse_id.id if hasattr(warehouse_id, 'id') else warehouse_id
+        prod_id = product_id.id if hasattr(product_id, 'id') else product_id
+
+        self.env.cr.execute("""
+            SELECT id, quantity, value, stock_landed_cost_id, stock_valuation_layer_id
+            FROM stock_valuation_layer
+            WHERE product_id = %s AND warehouse_id = %s AND company_id = %s
+            ORDER BY create_date, id
+        """, (prod_id, wh_id, company_id))
+        rows = self.env.cr.fetchall()
+
+        epsilon = self.FIFO_QTY_EPSILON
+        pool = {}       # layer id -> {'qty', 'value'}, insertion order == FIFO order
+        expected = {}
+        cogs = {}
+        shortage = 0.0
+        inverted = 0
+        previous_id = 0
+
+        for layer_id, qty, value, lc_id, target_id in rows:
+            if layer_id < previous_id:
+                inverted += 1
+            previous_id = max(previous_id, layer_id)
+            qty = float(qty or 0.0)
+            value = float(value or 0.0)
+
+            if qty > 0:
+                pool[layer_id] = {'qty': qty, 'value': value}
+                expected[layer_id] = None  # filled in at the end from the pool
+            elif qty < 0:
+                to_consume = -qty
+                consumed_value = 0.0
+                for pool_id in list(pool):
+                    if to_consume <= epsilon:
+                        break
+                    entry = pool[pool_id]
+                    available = entry['qty']
+                    if available <= 0:
+                        del pool[pool_id]
+                        continue
+                    taken = min(available, to_consume)
+                    unit_cost = entry['value'] / available
+                    entry['qty'] -= taken
+                    entry['value'] -= taken * unit_cost
+                    to_consume -= taken
+                    consumed_value += taken * unit_cost
+                    if entry['qty'] <= epsilon:
+                        del pool[pool_id]
+                shortage += to_consume
+                cogs[layer_id] = -consumed_value
+                # Outgoing layers never hold remaining (see _run_fifo, final write).
+                expected[layer_id] = (0.0, 0.0)
+            else:
+                # quantity == 0: landed cost or manual revaluation.
+                if lc_id and target_id in pool:
+                    pool[target_id]['value'] += value
+                expected[layer_id] = (0.0, 0.0)
+
+        for layer_id in expected:
+            if expected[layer_id] is None:
+                entry = pool.get(layer_id)
+                expected[layer_id] = (entry['qty'], entry['value']) if entry else (0.0, 0.0)
+
+        return {
+            'expected': expected,
+            'cogs': cogs,
+            'shortage': shortage,
+            'inverted': inverted,
+        }
+
     @api.depends('landed_cost_ids.landed_cost_value')
     def _compute_total_landed_cost(self):
         """Compute total landed cost for this layer across all locations."""
@@ -485,19 +623,26 @@ class StockValuationLayer(models.Model):
                     if move.origin_returned_move_id or move.picking_id.picking_type_code == 'incoming':
                         continue
                 
-                # Calculate total remaining qty at this warehouse BEFORE this layer
+                # Net ledger balance at this warehouse from every OTHER layer.
+                # Must sum immutable `quantity`, not `remaining_qty`: Odoo core
+                # `_run_fifo()` already ran inside super().create() and reduced the
+                # consumed candidates' remaining_qty before this constraint fires,
+                # so summing remaining_qty double-counts this outgoing layer and
+                # falsely blocks issuing the last unit in a warehouse.
+                # `id != layer.id` (not `id <`) so sibling negative layers from a
+                # multi-line POS order / multi-move picking are still counted.
                 domain = [
                     ('product_id', '=', layer.product_id.id),
                     ('warehouse_id', '=', layer.warehouse_id.id),
-                    ('id', '<', layer.id),  # Only layers created before this one
+                    ('id', '!=', layer.id),
                 ]
-                previous_layers = self.search(domain)
-                total_remaining_qty = sum(previous_layers.mapped('remaining_qty'))
-                
+                other_layers = self.search(domain)
+                net_warehouse_balance = sum(other_layers.mapped('quantity'))
+
                 # Check if consumption would make warehouse negative
                 precision_qty = self.env['decimal.precision'].precision_get('Product Unit of Measure')
-                
-                qty_after = total_remaining_qty + layer.quantity  # layer.quantity is negative
+
+                qty_after = net_warehouse_balance + layer.quantity  # layer.quantity is negative
                 
                 # Check validation mode from config
                 validation_mode = self.env['ir.config_parameter'].sudo().get_param(
@@ -515,7 +660,7 @@ class StockValuationLayer(models.Model):
                     error_msg = (
                         f"❌ คลัง {layer.warehouse_id.name} จะติดลบ!\n\n"
                         f"สินค้า: {layer.product_id.display_name}\n"
-                        f"จำนวนคงเหลือปัจจุบัน: {total_remaining_qty:.2f} {layer.product_id.uom_id.name}\n"
+                        f"จำนวนคงเหลือปัจจุบัน: {net_warehouse_balance:.2f} {layer.product_id.uom_id.name}\n"
                         f"พยายามตัดออก: {abs(layer.quantity):.2f} {layer.product_id.uom_id.name}\n"
                         f"จะเหลือ: {qty_after:.2f} {layer.product_id.uom_id.name} (ติดลบ!)\n\n"
                         f"⚠️ ไม่สามารถขายหรือโอนสินค้าได้มากกว่าที่มีในคลังนี้\n\n"
